@@ -39,6 +39,7 @@ import {
   NotImplementedByEngineError,
 } from '@waha/core/exceptions';
 import { IMediaEngineProcessor } from '@waha/core/media/IMediaEngineProcessor';
+import { LottieMediaProcessorWrapper } from '@waha/core/media/LottieMediaProcessorWrapper';
 import { QR } from '@waha/core/QR';
 import { ExtractMessageKeysForRead } from '@waha/core/utils/convertors';
 import { parseMessageIdSerialized } from '@waha/core/utils/ids';
@@ -2224,7 +2225,10 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
   }
 
   protected async downloadMedia(message) {
-    const processor = new GOWSEngineMediaProcessor(this);
+    let processor: IMediaEngineProcessor<any> = new GOWSEngineMediaProcessor(
+      this,
+    );
+    processor = new LottieMediaProcessorWrapper(processor, this.logger);
     const media = await this.mediaManager.processMedia(
       processor,
       message,
@@ -2573,6 +2577,15 @@ export class GOWSEngineMediaProcessor implements IMediaEngineProcessor<any> {
 
   async getMediaBuffer(message: any): Promise<Buffer | null> {
     const mediaDownloadTimeoutMs = 600_000; // 10 minutes
+
+    // Go serializes stickerMessage.URL as uppercase (Go struct field name), but
+    // whatsmeow's download unmarshals it expecting lowercase proto JSON. Add the
+    // lowercase alias so the download URL is found correctly.
+    const sticker = message?.Message?.stickerMessage;
+    if (sticker?.URL && !sticker?.url) {
+      message = JSON.parse(JSON.stringify(message));
+      message.Message.stickerMessage.url = message.Message.stickerMessage.URL;
+    }
 
     const data = JSON.stringify(message.Message);
     const tmpdir = new TmpDir(

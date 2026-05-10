@@ -66,6 +66,7 @@ import { toVcardV3 } from '@waha/core/vcard';
 import { createAgentProxy } from '@waha/core/helpers.proxy';
 import type { Agent } from 'https';
 import { IMediaEngineProcessor } from '@waha/core/media/IMediaEngineProcessor';
+import { LottieMediaProcessorWrapper } from '@waha/core/media/LottieMediaProcessorWrapper';
 import { QR } from '@waha/core/QR';
 import { AckToStatus, StatusToAck } from '@waha/core/utils/acks';
 import { pairs } from '@waha/utils/pairs';
@@ -2770,7 +2771,11 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
   }
 
   protected async downloadMedia(message): Promise<WAMedia | null> {
-    const processor = new NOWEBEngineMediaProcessor(this, this.loggerBuilder);
+    let processor: IMediaEngineProcessor<any> = new NOWEBEngineMediaProcessor(
+      this,
+      this.loggerBuilder,
+    );
+    processor = new LottieMediaProcessorWrapper(processor, this.logger);
     return this.mediaManager.processMedia(processor, message, this.name);
   }
 
