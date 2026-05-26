@@ -2555,6 +2555,64 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
   }
 }
 
+/**
+ * Many encrypted stickers carry URL "https://a.whatsapp.net" with no path. If
+ * that string is passed to DownloadMedia, the Go client may attempt HTTP GET to
+ * that host instead of decrypting via directPath. Real CDN links use hosts
+ * such as mmg.whatsapp.net with a full path.
+ *
+ * GOWS also exposes stickerMessage.URL (uppercase); some paths expect url
+ * (lowercase). We mirror URL -> url only for real HTTP-style URLs.
+ */
+function isPlaceholderWhatsAppMediaUrl(url: unknown): boolean {
+  if (typeof url !== 'string' || url.length === 0) {
+    return false;
+  }
+  try {
+    const parsed = new URL(url.trim());
+    if (parsed.hostname !== 'a.whatsapp.net') {
+      return false;
+    }
+    const path = parsed.pathname.replace(/\/+$/, '');
+    return path === '';
+  } catch {
+    return false;
+  }
+}
+
+function normalizeGowsStickerUrlForDownload(message: any): any {
+  const sticker = message?.Message?.stickerMessage;
+  if (!sticker) {
+    return message;
+  }
+
+  const upperUrl = sticker.URL;
+  const lowerUrl = sticker.url;
+
+  if (
+    isPlaceholderWhatsAppMediaUrl(upperUrl) ||
+    isPlaceholderWhatsAppMediaUrl(lowerUrl)
+  ) {
+    const cloned = JSON.parse(JSON.stringify(message));
+    const nextSticker = cloned.Message.stickerMessage;
+    delete nextSticker.URL;
+    delete nextSticker.url;
+    return cloned;
+  }
+
+  if (
+    typeof upperUrl === 'string' &&
+    upperUrl.length > 0 &&
+    (lowerUrl == null || lowerUrl === '')
+  ) {
+    const cloned = JSON.parse(JSON.stringify(message));
+    cloned.Message.stickerMessage.url = cloned.Message.stickerMessage.URL;
+    return cloned;
+  }
+
+  return message;
+}
+
 export class GOWSEngineMediaProcessor implements IMediaEngineProcessor<any> {
   constructor(public session: WhatsappSessionGoWSCore) {}
 
@@ -2578,14 +2636,7 @@ export class GOWSEngineMediaProcessor implements IMediaEngineProcessor<any> {
   async getMediaBuffer(message: any): Promise<Buffer | null> {
     const mediaDownloadTimeoutMs = 600_000; // 10 minutes
 
-    // Go serializes stickerMessage.URL as uppercase (Go struct field name), but
-    // whatsmeow's download unmarshals it expecting lowercase proto JSON. Add the
-    // lowercase alias so the download URL is found correctly.
-    const sticker = message?.Message?.stickerMessage;
-    if (sticker?.URL && !sticker?.url) {
-      message = JSON.parse(JSON.stringify(message));
-      message.Message.stickerMessage.url = message.Message.stickerMessage.URL;
-    }
+    message = normalizeGowsStickerUrlForDownload(message);
 
     const data = JSON.stringify(message.Message);
     const tmpdir = new TmpDir(
