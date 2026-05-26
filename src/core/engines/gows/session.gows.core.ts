@@ -2586,30 +2586,16 @@ function normalizeGowsStickerUrlForDownload(message: any): any {
     return message;
   }
 
-  const upperUrl = sticker.URL;
-  const lowerUrl = sticker.url;
-
-  if (
-    isPlaceholderWhatsAppMediaUrl(upperUrl) ||
-    isPlaceholderWhatsAppMediaUrl(lowerUrl)
-  ) {
-    const cloned = JSON.parse(JSON.stringify(message));
-    const nextSticker = cloned.Message.stickerMessage;
-    delete nextSticker.URL;
-    delete nextSticker.url;
-    return cloned;
+  if (isPlaceholderWhatsAppMediaUrl(sticker.URL)) {
+    delete sticker.URL;
+  }
+  if (isPlaceholderWhatsAppMediaUrl(sticker.url)) {
+    delete sticker.url;
   }
 
-  if (
-    typeof upperUrl === 'string' &&
-    upperUrl.length > 0 &&
-    (lowerUrl == null || lowerUrl === '')
-  ) {
-    const cloned = JSON.parse(JSON.stringify(message));
-    cloned.Message.stickerMessage.url = cloned.Message.stickerMessage.URL;
-    return cloned;
+  if (sticker.URL && !sticker.url) {
+    sticker.url = sticker.URL;
   }
-
   return message;
 }
 
