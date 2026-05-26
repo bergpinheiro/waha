@@ -4594,15 +4594,15 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@wppconnect-team/wppconnect@npm:^2.0.2":
-  version: 2.0.2
-  resolution: "@wppconnect-team/wppconnect@npm:2.0.2"
+"@wppconnect-team/wppconnect@npm:^2.2.1":
+  version: 2.2.1
+  resolution: "@wppconnect-team/wppconnect@npm:2.2.1"
   dependencies:
     "@img/sharp-win32-x64": "npm:^0.34.5"
-    "@wppconnect/wa-js": "npm:^4.1.0"
-    "@wppconnect/wa-version": "npm:^1.5.3829"
+    "@wppconnect/wa-js": "npm:^4.3.0"
+    "@wppconnect/wa-version": "npm:^1.5.3941"
     atob: "npm:^2.1.2"
-    axios: "npm:^1.16.0"
+    axios: "npm:^1.16.1"
     boxen: "npm:^5.1.2"
     catch-exit: "npm:^2.0.0"
     chalk: "npm:~4.1.2"
@@ -4615,7 +4615,7 @@ __metadata:
     logform: "npm:^2.7.0"
     lookpath: "npm:^1.2.3"
     mime-types: "npm:^3.0.2"
-    puppeteer: "npm:^24.37.5"
+    puppeteer: "npm:^24.43.1"
     puppeteer-extra: "npm:^3.3.6"
     puppeteer-extra-plugin-stealth: "npm:^2.11.2"
     puppeteer-extra-plugin-user-data-dir: "npm:^2.4.1"
@@ -4628,30 +4628,30 @@ __metadata:
     tmp: "npm:^0.2.5"
     tree-kill: "npm:^1.2.2"
     winston: "npm:^3.19.0"
-    ws: "npm:^8.19.0"
+    ws: "npm:^8.21.0"
   dependenciesMeta:
     "@img/sharp-win32-x64":
       optional: true
     fsevents:
       optional: true
-  checksum: 10/b1e5d83174e5786d17ceceec0917d077428d8f3b15f4f9e0df667f23b350d2fd984f322e7fc69270751e55aa10a4747ec95c7f5a6c5d7a6048094520e0e0686d
+  checksum: 10/d7940928c2874ddd0e2412b0628d2750c2457bf9b08a8840e79de24e8666f792e2e7a78c0bc16c13c4ab870e7d37683ad1b08522fb9ea7da90f695e5b21cc044
   languageName: node
   linkType: hard
 
-"@wppconnect/wa-js@npm:^4.1.0":
-  version: 4.1.0
-  resolution: "@wppconnect/wa-js@npm:4.1.0"
-  checksum: 10/e807b6f3b0bdd1db0400937fe24fbdd27414d09067c734e4a7fa852155be28cda57cf64a6b7547c7f9559bd483e933a321156d87e39579bb342d7bbdcf273c9d
+"@wppconnect/wa-js@npm:^4.3.0":
+  version: 4.3.0
+  resolution: "@wppconnect/wa-js@npm:4.3.0"
+  checksum: 10/844e63b58b62d4057ab51f114b3f9b12e13637a026b6df50c5f53801181a3800065342c0f79478db10d43dfe96a6ec60bf9d8fab7840caaf94970a774572279d
   languageName: node
   linkType: hard
 
-"@wppconnect/wa-version@npm:^1.5.3829":
-  version: 1.5.3874
-  resolution: "@wppconnect/wa-version@npm:1.5.3874"
+"@wppconnect/wa-version@npm:^1.5.3941":
+  version: 1.5.4014
+  resolution: "@wppconnect/wa-version@npm:1.5.4014"
   dependencies:
     node-fetch: "npm:^2.7.0"
     semver: "npm:^7.7.4"
-  checksum: 10/37812da2cb3f63c93a6519251da3bc61f52fdd874842a9d31792430ff56e533e9d3f42feed9630bf1c77ec3a5e4d7347ffa4732d58e742d8463019f7770fb9c1
+  checksum: 10/97916af06fc2d1817cb3122233577b39047c46aa607ba0a14ff8d0ba9decd62a1d0220fc658da97dea378f433cc4b3bae89960d25320ae456d905b687ba40ad3
   languageName: node
   linkType: hard
 
@@ -13963,8 +13963,8 @@ __metadata:
     "@types/supertest": "npm:^2.0.8"
     "@types/user-agents": "npm:^1"
     "@types/ws": "npm:^8.5.4"
-    "@wppconnect-team/wppconnect": "npm:^2.0.2"
-    "@wppconnect/wa-js": "npm:^4.1.0"
+    "@wppconnect-team/wppconnect": "npm:^2.2.1"
+    "@wppconnect/wa-js": "npm:^4.3.0"
     adm-zip: "npm:0.5.10"
     agentkeepalive: "npm:^4.5.0"
     async-lock: "npm:^1.4.1"
