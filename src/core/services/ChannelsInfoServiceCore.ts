@@ -1,22 +1,36 @@
 import { Injectable } from '@nestjs/common';
-import { AvailableInPlusVersion } from '@waha/core/exceptions';
+import { CategoriesByValue } from '@waha/core/services/channels.categories';
+import { CountriesByCode } from '@waha/core/services/channels.countries';
+import { ViewsByValue } from '@waha/core/services/channels.views';
 import {
   ChannelCategory,
   ChannelCountry,
   ChannelView,
 } from '@waha/structures/channels.dto';
 
+const COUNTRIES: ChannelCountry[] = Object.entries(CountriesByCode).map(
+  ([key, value]) => ({ code: key, name: value }),
+);
+
+const CATEGORIES: ChannelCategory[] = Object.entries(CategoriesByValue).map(
+  ([key, value]) => ({ value: key, name: value }),
+);
+
+const VIEWS: ChannelView[] = Object.entries(ViewsByValue).map(
+  ([key, value]) => ({ value: key, name: value }),
+);
+
 @Injectable()
 export class ChannelsInfoServiceCore {
   async getCountries(): Promise<ChannelCountry[]> {
-    throw new AvailableInPlusVersion();
+    return COUNTRIES;
   }
 
   async getCategories(): Promise<ChannelCategory[]> {
-    throw new AvailableInPlusVersion();
+    return CATEGORIES;
   }
 
   async getViews(): Promise<ChannelView[]> {
-    throw new AvailableInPlusVersion();
+    return VIEWS;
   }
 }

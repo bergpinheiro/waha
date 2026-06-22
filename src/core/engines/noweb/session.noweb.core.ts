@@ -36,6 +36,10 @@ import {
   LabelAssociationType,
 } from '@adiwajshing/baileys/lib/Types/LabelAssociation';
 import { MessageUserReceiptUpdate } from '@adiwajshing/baileys/lib/Types/Message';
+import type {
+  MediaGenerationOptions,
+  NewsletterFetchedUpdate,
+} from '@adiwajshing/baileys/lib/Types';
 import { ILogger } from '@adiwajshing/baileys/lib/Utils/logger';
 import { isLidUser } from '@adiwajshing/baileys/lib/WABinary/jid-utils';
 import { UnprocessableEntityException } from '@nestjs/common';
@@ -58,10 +62,7 @@ import {
 } from '@waha/core/engines/noweb/noweb.newsletter';
 import { NowebAuthFactoryCore } from '@waha/core/engines/noweb/NowebAuthFactoryCore';
 import { NowebInMemoryStore } from '@waha/core/engines/noweb/store/NowebInMemoryStore';
-import {
-  AvailableInPlusVersion,
-  NotImplementedByEngineError,
-} from '@waha/core/exceptions';
+import { NotImplementedByEngineError } from '@waha/core/exceptions';
 import { toVcardV3 } from '@waha/core/vcard';
 import { createAgentProxy } from '@waha/core/helpers.proxy';
 import type { Agent } from 'https';
@@ -74,7 +75,12 @@ import { ExtractMessageKeysForRead } from '@waha/core/utils/convertors';
 import { parseMessageIdSerialized } from '@waha/core/utils/ids';
 import { isJidNewsletter, toCusFormat, toJID } from '@waha/core/utils/jids';
 import { DistinctAck, DistinctMessages } from '@waha/core/utils/reactive';
-import { flipObject, splitAt } from '@waha/helpers';
+import {
+  flipObject,
+  parseBool,
+  sortObjectByValues,
+  splitAt,
+} from '@waha/helpers';
 import { PairingCodeResponse } from '@waha/structures/auth.dto';
 import { CallData } from '@waha/structures/calls.dto';
 import {
@@ -118,6 +124,7 @@ import {
   MessageReplyRequest,
   MessageStarRequest,
   MessageTextRequest,
+  MessageVideoRequest,
   MessageVoiceRequest,
   SendSeenRequest,
   WANumberExistResult,
@@ -137,7 +144,7 @@ import {
   WAHASessionStatus,
   WAMessageAck,
 } from '@waha/structures/enums.dto';
-import { BinaryFile, RemoteFile } from '@waha/structures/files.dto';
+import { BinaryFile, FileType, RemoteFile } from '@waha/structures/files.dto';
 import {
   CreateGroupRequest,
   GroupParticipant,
@@ -163,8 +170,11 @@ import { MeInfo } from '@waha/structures/sessions.dto';
 import {
   BROADCAST_ID,
   DeleteStatusRequest,
+  ImageStatus,
   StatusRequest,
   TextStatus,
+  VideoStatus,
+  VoiceStatus,
 } from '@waha/structures/status.dto';
 import {
   EnginePayload,
@@ -197,6 +207,7 @@ import {
 } from 'rxjs';
 import { debounceTime, map } from 'rxjs/operators';
 
+import { NowebClient } from './NowebClient';
 import { INowebStore } from './store/INowebStore';
 import { NowebPersistentStore } from './store/NowebPersistentStore';
 import { NowebStorageFactoryCore } from './store/NowebStorageFactoryCore';
@@ -215,12 +226,19 @@ import {
 import { extractWALocation } from '@waha/core/engines/waproto/locaiton';
 import { extractVCards } from '@waha/core/engines/waproto/vcards';
 import { Activity } from '@waha/core/abc/activity';
+import { WAMimeType } from '@waha/core/media/WAMimeType';
 import {
   WAHA_CLIENT_BROWSER_NAME,
   WAHA_CLIENT_DEVICE_NAME,
 } from '@waha/core/env';
+import { detectMimetype } from '@waha/utils/files';
+import esm from '@waha/vendor/esm';
+import axios from 'axios';
+import axiosRetry from 'axios-retry';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const promiseRetry = require('promise-retry');
+
+axiosRetry(axios, { retries: 3 });
 
 export const BaileysEvents = {
   CONNECTION_UPDATE: 'connection.update',
@@ -905,12 +923,20 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
     return true;
   }
 
-  protected setProfilePicture(file: BinaryFile | RemoteFile): Promise<boolean> {
-    throw new AvailableInPlusVersion();
+  @Activity()
+  protected async setProfilePicture(
+    file: BinaryFile | RemoteFile,
+  ): Promise<boolean> {
+    const content: Buffer = await this.fileToBuffer(file);
+    const me = this.getSessionMeInfo();
+    await this.sock.updateProfilePicture(me.id, content);
+    return true;
   }
 
-  protected deleteProfilePicture(): Promise<boolean> {
-    throw new AvailableInPlusVersion();
+  protected async deleteProfilePicture(): Promise<boolean> {
+    const me = this.getSessionMeInfo();
+    await this.sock.removeProfilePicture(me.id);
+    return true;
   }
 
   /**
@@ -1061,32 +1087,209 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
     return await this.sock.sendMessage(request.chatId, message, options);
   }
 
-  sendImage(request: MessageImageRequest) {
-    throw new AvailableInPlusVersion();
+  @Activity()
+  async sendImage(request: MessageImageRequest) {
+    const message: any = await this.fileToMessage(
+      request.file,
+      'image',
+      request.caption,
+    );
+    message.mimetype = message.mimetype || WAMimeType.IMAGE;
+    const chatId = toJID(this.ensureSuffix(request.chatId));
+    // Baileys' newsletter media path skips thumbnail and dimension computation.
+    // Pre-compute them so iOS renders the image with the correct aspect ratio.
+    if (isJidNewsletter(chatId)) {
+      try {
+        const thumb = await esm.b.extractImageThumb(message.image, 72);
+        message.jpegThumbnail = thumb.buffer;
+        message.width = thumb.original.width;
+        message.height = thumb.original.height;
+      } catch (err) {
+        this.logger.warn(
+          { error: err },
+          'Failed to generate thumbnail for newsletter image',
+        );
+      }
+    }
+    if (request.mentions?.length) {
+      message.mentions = request.mentions.map((mention) => toJID(mention));
+    }
+    const options = await this.getMessageOptions(request);
+    return this.sock.sendMessage(chatId, message, options);
   }
 
-  sendFile(request: MessageFileRequest) {
-    throw new AvailableInPlusVersion();
+  @Activity()
+  async sendFile(request: MessageFileRequest) {
+    const message: any = await this.fileToMessage(
+      request.file,
+      'document',
+      request.caption,
+    );
+    if (!message.mimetype) {
+      message.mimetype = await detectMimetype(message['document']);
+    }
+    if (request.mentions?.length) {
+      message.mentions = request.mentions.map((mention) => toJID(mention));
+    }
+    const chatId = toJID(this.ensureSuffix(request.chatId));
+    const options = await this.getMessageOptions(request);
+    return this.sock.sendMessage(chatId, message, options);
   }
 
-  sendVoice(request: MessageVoiceRequest) {
-    throw new AvailableInPlusVersion();
+  @Activity()
+  async sendVoice(request: MessageVoiceRequest) {
+    const message: any = await this.fileToMessage(request.file, 'audio');
+    message.mimetype = message.mimetype || WAMimeType.VOICE;
+    if (request.convert) {
+      message['audio'] = await this.mediaConverter.voice(message['audio']);
+      message.mimetype = WAMimeType.VOICE;
+    }
+    const chatId = toJID(this.ensureSuffix(request.chatId));
+    const options = await this.getMessageOptions(request);
+    return this.sock.sendMessage(chatId, message, options);
   }
 
-  sendLinkCustomPreview(
+  @Activity()
+  async sendVideo(request: MessageVideoRequest) {
+    const message: any = await this.fileToMessage(
+      request.file,
+      'video',
+      request.caption,
+    );
+    message.mimetype = message.mimetype || WAMimeType.VIDEO;
+    if (request.convert) {
+      message['video'] = await this.mediaConverter.video(message['video']);
+      message.mimetype = WAMimeType.VIDEO;
+    }
+    if (request.mentions?.length) {
+      message.mentions = request.mentions.map((mention) => toJID(mention));
+    }
+    const duration = await esm.b
+      .getAudioDuration(message['video'])
+      .catch((err) => {
+        this.logger.warn({ error: err }, 'Failed to get video duration');
+        return undefined;
+      });
+    message.seconds = duration;
+    const isGif = request.file?.mimetype === 'image/gif';
+    if (isGif) {
+      message.gifPlayback = true;
+      message.externalShareFullVideoDurationInSeconds = 0;
+    }
+    const chatId = toJID(this.ensureSuffix(request.chatId));
+    const options = await this.getMessageOptions(request);
+    message.ptv = parseBool(request.asNote);
+    return this.sock.sendMessage(chatId, message, options);
+  }
+
+  @Activity()
+  async sendLinkCustomPreview(
     request: MessageLinkCustomPreviewRequest,
   ): Promise<any> {
-    throw new AvailableInPlusVersion();
+    const chatId = toJID(this.ensureSuffix(request.chatId));
+    const options = await this.getMessageOptions(request);
+    const preview = request.preview;
+    const urlInfo = {
+      'matched-text': preview.url,
+      title: preview.title,
+      description: preview.description,
+      jpegThumbnail: null,
+      highQualityThumbnail: null,
+    };
+
+    if (request.preview.image) {
+      const content: Buffer = await this.fileToBuffer(request.preview.image);
+      if (!request.linkPreviewHighQuality) {
+        // generate built-in thumbnail
+        const thumbnail = await esm.b.extractImageThumb(content, 192);
+        urlInfo.jpegThumbnail = thumbnail.buffer;
+      } else {
+        // upload HQ thumbnail
+        const { imageMessage } = await esm.b.prepareWAMessageMedia(
+          { image: content },
+          {
+            upload: this.sock.waUploadToServer,
+            mediaTypeOverride: 'thumbnail-link',
+            options: { signal: AbortSignal.timeout(10_000) },
+          },
+        );
+        urlInfo.jpegThumbnail = imageMessage?.jpegThumbnail
+          ? Buffer.from(imageMessage.jpegThumbnail)
+          : undefined;
+        urlInfo.highQualityThumbnail = imageMessage;
+      }
+    }
+
+    const message = {
+      text: request.text,
+      linkPreview: urlInfo,
+    };
+    return this.sock.sendMessage(chatId, message as any, options);
   }
 
   protected async uploadMedia(
     file: RemoteFile | BinaryFile,
-    type,
+    type: any,
   ): Promise<any> {
-    if (file && ('url' in file || 'data' in file)) {
-      throw new AvailableInPlusVersion('Sending media (image, video, pdf)');
+    if (!file) {
+      return;
     }
-    return;
+    if (!('url' in file || 'data' in file)) {
+      return;
+    }
+    const message: any = await this.fileToMessage(file, type);
+    const options: MediaGenerationOptions = {
+      logger: this.engineLogger,
+      upload: this.sock.waUploadToServer,
+    };
+    const { imageMessage } = await esm.b.prepareWAMessageMedia(
+      message,
+      options,
+    );
+    return imageMessage;
+  }
+
+  get client(): NowebClient {
+    return new NowebClient(this.sock);
+  }
+
+  protected async fileToMessage(
+    file: RemoteFile | BinaryFile,
+    type: any,
+    caption = '',
+  ) {
+    let content: Buffer;
+    if ('url' in file) {
+      content = await this.fetch(file.url);
+    } else if ('data' in file) {
+      content = Buffer.from(file.data, 'base64');
+    } else {
+      throw new UnprocessableEntityException(
+        'Either "file.url" or "file.data" must be specified.',
+      );
+    }
+
+    return {
+      [type]: content,
+      mimetype: file.mimetype,
+      caption: caption,
+      fileName: file.filename,
+      ptt: type === 'audio',
+    };
+  }
+
+  private async fileToBuffer(file: FileType): Promise<Buffer> {
+    let content: Buffer;
+    if ('data' in file) {
+      content = Buffer.from(file.data, 'base64');
+    } else if ('url' in file) {
+      content = await this.fetch(file.url);
+    } else {
+      throw new UnprocessableEntityException(
+        'Either file.url or file.data must be specified.',
+      );
+    }
+    return content;
   }
 
   @Activity()
@@ -1104,8 +1307,24 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
     );
   }
 
-  sendList(request: SendListRequest): Promise<any> {
-    throw new AvailableInPlusVersion();
+  @Activity()
+  async sendList(request: SendListRequest): Promise<any> {
+    const jid = toJID(this.ensureSuffix(request.chatId));
+    if (!isLidUser(jid) && !isPnUser(jid)) {
+      throw new UnprocessableEntityException(
+        `List message can only be sent to a direct message chat.`,
+      );
+    }
+    const message = request.message;
+    const msg = {
+      text: message.description || '',
+      title: message.title,
+      buttonText: message.button,
+      footer: message.footer,
+      sections: message.sections,
+    } as any;
+    const options = await this.getMessageOptions(request);
+    return await this.sock.sendMessage(jid, msg, options);
   }
 
   @Activity()
@@ -1626,6 +1845,22 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
    * Group methods
    */
   @Activity()
+  protected async setGroupPicture(
+    id: string,
+    file: BinaryFile | RemoteFile,
+  ): Promise<boolean> {
+    const content: Buffer = await this.fileToBuffer(file);
+    await this.sock.updateProfilePicture(id, content);
+    return true;
+  }
+
+  @Activity()
+  protected async deleteGroupPicture(id: string): Promise<boolean> {
+    await this.sock.removeProfilePicture(id);
+    return true;
+  }
+
+  @Activity()
   public createGroup(request: CreateGroupRequest) {
     const participants = request.participants.map(getId);
     return this.sock.groupCreate(request.name, participants);
@@ -1896,6 +2131,84 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
     );
   }
 
+  @Activity()
+  public async sendImageStatus(status: ImageStatus) {
+    const message: any = await this.fileToMessage(
+      status.file,
+      'image',
+      status.caption,
+    );
+    message.mimetype = message.mimetype || WAMimeType.IMAGE;
+    const jids = await this.prepareJidsForStatus(status.contacts);
+    if (!status.id) {
+      this.upsertMeInJIDs(jids);
+    }
+    const messageId = this.prepareMessageIdForStatus(status);
+    const options = {
+      messageId: messageId,
+    };
+    return await this.sendStatusMessage(
+      message,
+      options,
+      jids,
+      status.contacts?.length,
+    );
+  }
+
+  @Activity()
+  public async sendVoiceStatus(status: VoiceStatus) {
+    const message: any = await this.fileToMessage(status.file, 'audio');
+    message.mimetype = message.mimetype || WAMimeType.VOICE;
+    if (status.convert) {
+      message['audio'] = await this.mediaConverter.voice(message['audio']);
+      message.mimetype = WAMimeType.VOICE;
+    }
+    const jids = await this.prepareJidsForStatus(status.contacts);
+    if (!status.id) {
+      this.upsertMeInJIDs(jids);
+    }
+    const messageId = this.prepareMessageIdForStatus(status);
+    const options = {
+      backgroundColor: status.backgroundColor,
+      messageId: messageId,
+    };
+    return await this.sendStatusMessage(
+      message,
+      options,
+      jids,
+      status.contacts?.length,
+    );
+  }
+
+  @Activity()
+  public async sendVideoStatus(status: VideoStatus) {
+    const message: any = await this.fileToMessage(
+      status.file,
+      'video',
+      status.caption,
+    );
+    message.mimetype = message.mimetype || WAMimeType.VIDEO;
+    if (status.convert) {
+      message['video'] = await this.mediaConverter.video(message['video']);
+      message.mimetype = WAMimeType.VIDEO;
+    }
+    const jids = await this.prepareJidsForStatus(status.contacts);
+    if (!status.id) {
+      this.upsertMeInJIDs(jids);
+    }
+    const messageId = this.prepareMessageIdForStatus(status);
+    const options = {
+      statusJidList: jids,
+      messageId: messageId,
+    };
+    return await this.sendStatusMessage(
+      message,
+      options,
+      jids,
+      status.contacts?.length,
+    );
+  }
+
   protected prepareMessageIdForStatus(status: StatusRequest) {
     if (status.id) {
       this.saveSentMessageId(status.id);
@@ -1955,23 +2268,74 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
   /**
    * Channels methods
    */
-  public searchChannelsByView(
+  @Activity()
+  public async searchChannelsByView(
     query: ChannelSearchByView,
   ): Promise<ChannelListResult> {
-    throw new AvailableInPlusVersion();
+    const response = await this.client.searchChannelsByView(query);
+    const channels: Channel[] = response.newsletters.map(
+      this.toChannel.bind(this),
+    );
+    return {
+      page: response.page,
+      channels: channels,
+    };
   }
 
-  public searchChannelsByText(
+  @Activity()
+  public async searchChannelsByText(
     query: ChannelSearchByText,
   ): Promise<ChannelListResult> {
-    throw new AvailableInPlusVersion();
+    const response = await this.client.searchChannelsByText(query);
+    const channels: Channel[] = response.newsletters.map(
+      this.toChannel.bind(this),
+    );
+    return {
+      page: response.page,
+      channels: channels,
+    };
   }
 
+  @Activity()
   public async previewChannelMessages(
     inviteCode: string,
     query: PreviewChannelMessages,
   ): Promise<ChannelMessage[]> {
-    throw new AvailableInPlusVersion();
+    const downloadMedia = query.downloadMedia;
+    const updates = await this.sock.newsletterFetchPreviewMessages(
+      'invite',
+      inviteCode,
+      query.limit,
+      null,
+    );
+    const promises = [];
+    for (const update of updates) {
+      promises.push(
+        this.NewsletterFetchedUpdateToChannelMessage(update, downloadMedia),
+      );
+    }
+    let result = await Promise.all(promises);
+    result = result.filter(Boolean);
+    return result;
+  }
+
+  private async NewsletterFetchedUpdateToChannelMessage(
+    update: NewsletterFetchedUpdate,
+    downloadMedia: boolean,
+  ): Promise<ChannelMessage> {
+    let reactions: any = Object.fromEntries(
+      update.reactions.map(({ code, count }) => [code, count]),
+    );
+    reactions = sortObjectByValues(reactions) || {};
+    const message = await this.processIncomingMessage(
+      update.message,
+      downloadMedia,
+    );
+    return {
+      message: message,
+      reactions: reactions,
+      viewCount: update.views,
+    };
   }
 
   protected toChannel(newsletter: NOWEBNewsletterMetadata): Channel {
@@ -2017,7 +2381,23 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
       request.name,
       request.description,
     );
-    return this.toChannel(toNewsletterMetadata(newsletter));
+    const channel = this.toChannel(toNewsletterMetadata(newsletter));
+
+    if (request.picture) {
+      let file = request.picture;
+      let picture: any;
+      // @ts-ignore
+      if (file.url) {
+        file = file as RemoteFile;
+        picture = await esm.b.getStream({ url: file.url });
+        // @ts-ignore
+      } else if (file.data) {
+        file = file as BinaryFile;
+        picture = Buffer.from(file.data, 'base64');
+      }
+      await this.sock.newsletterUpdatePicture(channel.id, picture);
+    }
+    return channel;
   }
 
   public async channelsGetChannel(id: string) {

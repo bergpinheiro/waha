@@ -3,13 +3,21 @@ import * as path from 'node:path';
 import { DataStore } from '@waha/core/abc/DataStore';
 import { GowsAuthSimple } from '@waha/core/engines/gows/store/GowsAuthSimple';
 import { LocalStore } from '@waha/core/storage/LocalStore';
+import { PsqlStore } from '@waha/core/storage/psql/PsqlStore';
 
 import { GowsAuth } from './GowsAuth';
 
 export class GowsAuthFactoryCore {
   buildAuth(store: DataStore, name: string): Promise<GowsAuth> {
     if (store instanceof LocalStore) return this.buildSqlite3(store, name);
+    if (store instanceof PsqlStore) return this.buildPsql(store, name);
     throw new Error(`Unsupported store type '${store.constructor.name}'`);
+  }
+
+  protected async buildPsql(store: PsqlStore, name: string): Promise<GowsAuth> {
+    await store.init(name);
+    const connection = store.getSessionDbURL(name);
+    return new GowsAuthSimple(connection, 'postgres');
   }
 
   protected async buildSqlite3(

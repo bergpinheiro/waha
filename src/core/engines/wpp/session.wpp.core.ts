@@ -47,6 +47,7 @@ import {
   MessageFileRequest,
   MessageStarRequest,
   MessageTextRequest,
+  MessageVideoRequest,
   MessageVoiceRequest,
   SendSeenRequest,
   WANumberExistResult,
@@ -81,7 +82,13 @@ import {
 import { WAHAChatPresences } from '@waha/structures/presence.dto';
 import { WAMessage } from '@waha/structures/responses.dto';
 import { MeInfo } from '@waha/structures/sessions.dto';
-import { TextStatus } from '@waha/structures/status.dto';
+import {
+  BROADCAST_ID,
+  ImageStatus,
+  TextStatus,
+  VideoStatus,
+  VoiceStatus,
+} from '@waha/structures/status.dto';
 import { ReplyToMessage } from '@waha/structures/message.dto';
 import {
   PollVotePayload,
@@ -121,10 +128,7 @@ import {
   WppSendTextOptions,
   WppSendTextStatusOptions,
 } from '@waha/core/engines/wpp/WppTypes';
-import {
-  AvailableInPlusVersion,
-  NotImplementedByEngineError,
-} from '@waha/core/exceptions';
+import { NotImplementedByEngineError } from '@waha/core/exceptions';
 import { IMediaEngineProcessor } from '@waha/core/media/IMediaEngineProcessor';
 import { LottieMediaProcessorWrapper } from '@waha/core/media/LottieMediaProcessorWrapper';
 import { IWPPAuthManager } from '@waha/core/engines/wpp/IWPPAuthManager';
@@ -168,6 +172,16 @@ import { LidToPhoneNumber } from '@waha/structures/lids.dto';
 import { evaluateAndReturn } from '@wppconnect-team/wppconnect/dist/api/helpers';
 import { getFromToParticipant } from '@waha/core/engines/noweb/session.noweb.core';
 import { IsChrome } from '@waha/version';
+import { WPPAuthFactory } from '@waha/core/engines/wpp/WPPAuthFactory';
+import { WAMimeType } from '@waha/core/media/WAMimeType';
+import { detectMimetype } from '@waha/utils/files';
+import type {
+  AudioMessageOptions,
+  DocumentMessageOptions,
+  FileMessageOptions,
+  ImageMessageOptions,
+  VideoMessageOptions,
+} from '@wppconnect/wa-js/dist/chat';
 
 declare global {
   interface Window {
@@ -194,6 +208,7 @@ export class WhatsappSessionWPPCore extends WhatsappSession {
   protected qr: QR;
   protected wpp?: WPPWhatsapp;
   protected authManager: IWPPAuthManager | null = null;
+  private authFactory = new WPPAuthFactory();
   private meInfo: MeInfo | null = null;
   private pairingCode?: string;
   private presencesByChatId = new Map<string, WAHAChatPresences>();
@@ -218,6 +233,13 @@ export class WhatsappSessionWPPCore extends WhatsappSession {
   }
 
   async start() {
+    this.authManager = await this.authFactory.build(
+      this.sessionStore,
+      this.name,
+      this.getUserDataDir(),
+      this.loggerBuilder,
+      () => this.status,
+    );
     this.shouldRestart = true;
     this.status = WAHASessionStatus.STARTING;
     this.pairingCode = null;
@@ -624,19 +646,218 @@ export class WhatsappSessionWPPCore extends WhatsappSession {
     return this.toWAMessage(sent);
   }
 
-  public sendImage(request: MessageImageRequest) {
-    void request;
-    throw new AvailableInPlusVersion();
+  @Activity()
+  async sendImage(request: MessageImageRequest) {
+    const quotedMessageId = this.getReplyToMessageId(request as any);
+    const content = await this.fileToBuffer(request.file);
+    const mimetype = request.file.mimetype || WAMimeType.IMAGE;
+    const media = WPPMedia(content, mimetype);
+    const options: ImageMessageOptions = {
+      type: 'image',
+      caption: request.caption,
+      filename: request.file.filename,
+      mimetype: mimetype,
+      quotedMsg: quotedMessageId,
+      mentionedList: request.mentions?.map((id) => this.ensureSuffix(id)),
+      waitForAck: false,
+    };
+    return await this.sendMedia(
+      this.ensureSuffix(request.chatId),
+      media,
+      options,
+    );
   }
 
-  public sendFile(request: MessageFileRequest) {
-    void request;
-    throw new AvailableInPlusVersion();
+  @Activity()
+  async sendFile(request: MessageFileRequest) {
+    const quotedMessageId = this.getReplyToMessageId(request as any);
+    const content = await this.fileToBuffer(request.file);
+    const mimetype = request.file.mimetype || (await detectMimetype(content));
+    const media = WPPMedia(content, mimetype);
+    const options: DocumentMessageOptions = {
+      type: 'document',
+      caption: request.caption,
+      filename: request.file.filename,
+      mimetype: mimetype,
+      quotedMsg: quotedMessageId,
+      mentionedList: request.mentions?.map((id) => this.ensureSuffix(id)),
+      waitForAck: false,
+    };
+    return await this.sendMedia(
+      this.ensureSuffix(request.chatId),
+      media,
+      options,
+    );
   }
 
-  public sendVoice(request: MessageVoiceRequest) {
-    void request;
-    throw new AvailableInPlusVersion();
+  @Activity()
+  async sendVoice(request: MessageVoiceRequest) {
+    const quotedMessageId = this.getReplyToMessageId(request as any);
+    let content = await this.fileToBuffer(request.file);
+    let mimetype = request.file.mimetype || WAMimeType.VOICE;
+    if (request.convert) {
+      content = await this.convertVoice(content);
+      mimetype = WAMimeType.VOICE;
+    }
+    const media = WPPMedia(content, mimetype);
+    const options: AudioMessageOptions = {
+      type: 'audio',
+      isPtt: true,
+      mimetype: mimetype,
+      quotedMsg: quotedMessageId,
+      waitForAck: false,
+    };
+    return await this.sendMedia(
+      this.ensureSuffix(request.chatId),
+      media,
+      options,
+    );
+  }
+
+  @Activity()
+  async sendVideo(request: MessageVideoRequest) {
+    const quotedMessageId = this.getReplyToMessageId(request as any);
+    let content = await this.fileToBuffer(request.file);
+    let mimetype = request.file.mimetype || WAMimeType.VIDEO;
+    if (request.convert) {
+      content = await this.convertVideo(content);
+      mimetype = WAMimeType.VIDEO;
+    }
+    const media = WPPMedia(content, mimetype);
+    const options: VideoMessageOptions = {
+      type: 'video',
+      isPtv: request.asNote,
+      caption: request.caption,
+      filename: request.file.filename,
+      mimetype: mimetype,
+      quotedMsg: quotedMessageId,
+      mentionedList: request.mentions?.map((id) => this.ensureSuffix(id)),
+      waitForAck: false,
+    };
+    return await this.sendMedia(
+      this.ensureSuffix(request.chatId),
+      media,
+      options,
+    );
+  }
+
+  @Activity()
+  async sendImageStatus(status: ImageStatus) {
+    this.checkStatusRequest(status);
+    const content = await this.fileToBuffer(status.file);
+    const mimetype = status.file.mimetype || WAMimeType.IMAGE;
+    const media = WPPMedia(content, mimetype);
+    const options: any = {
+      caption: status.caption,
+      waitForAck: false,
+    };
+    if (status.id) {
+      options.messageId = status.id;
+    }
+    const sent = (await this.wpp.sendImageStatus(media, options)) as any;
+    return await this.toStatusResponse(sent, status.id);
+  }
+
+  @Activity()
+  async sendVoiceStatus(status: VoiceStatus) {
+    this.checkStatusRequest(status);
+    let content = await this.fileToBuffer(status.file);
+    let mimetype = status.file.mimetype || WAMimeType.VOICE;
+    if (status.convert) {
+      content = await this.convertVoice(content);
+      mimetype = WAMimeType.VOICE;
+    }
+    const media = WPPMedia(content, mimetype);
+    const options: AudioMessageOptions = {
+      type: 'audio',
+      isPtt: true,
+      mimetype: mimetype,
+      waitForAck: true,
+    };
+    return await this.sendMedia(BROADCAST_ID, media, options);
+  }
+
+  @Activity()
+  async sendVideoStatus(status: VideoStatus) {
+    this.checkStatusRequest(status);
+    let content = await this.fileToBuffer(status.file);
+    let mimetype = status.file.mimetype || WAMimeType.VIDEO;
+    if (status.convert) {
+      content = await this.convertVideo(content);
+      mimetype = WAMimeType.VIDEO;
+    }
+    const media = WPPMedia(content, mimetype);
+    const options: any = {
+      caption: status.caption,
+      waitForAck: false,
+    };
+    if (status.id) {
+      options.messageId = status.id;
+    }
+    const sent = (await this.wpp.sendVideoStatus(media, options)) as any;
+    return await this.toStatusResponse(sent, status.id);
+  }
+
+  private async sendMedia(
+    chatId: string,
+    media: string,
+    options: FileMessageOptions,
+  ) {
+    const sent = await this.wpp.sendFile(chatId, media, options);
+    const sentId = sent?.id || null;
+    if (!sentId) {
+      return {
+        id: null,
+        _data: sent,
+      };
+    }
+    this.saveSentMessageId(this.extractMessageIdPart(sentId));
+    const sentMessage = await this.wpp.getMessageById(sentId).catch(() => null);
+    if (!sentMessage) {
+      return {
+        id: sentId,
+        _data: sent,
+      };
+    }
+    return this.toWAMessage(sentMessage);
+  }
+
+  private async convertVideo(content: Buffer): Promise<Buffer> {
+    return await this.mediaConverter.video(content);
+  }
+
+  private async convertVoice(content: Buffer): Promise<Buffer> {
+    return await this.mediaConverter.voice(content);
+  }
+
+  private extractMessageIdPart(messageId: string): string {
+    if (!messageId) {
+      return null;
+    }
+    const parts = messageId.split('_');
+    if (parts.length >= 3) {
+      return parts[2];
+    }
+    return messageId;
+  }
+
+  private async toStatusResponse(sent: any, fallbackId?: string) {
+    const sentId = sent?.id || fallbackId || null;
+    if (!sentId) {
+      return {
+        id: null,
+        _data: sent,
+      };
+    }
+    this.saveSentMessageId(this.extractMessageIdPart(sentId));
+    const sentMessage = await this.wpp.getMessageById(sentId).catch(() => null);
+    if (!sentMessage) {
+      return {
+        id: sentId,
+        _data: sent,
+      };
+    }
+    return this.toWAMessage(sentMessage);
   }
 
   @Activity()

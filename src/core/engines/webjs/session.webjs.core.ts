@@ -1,6 +1,7 @@
 import { UnprocessableEntityException } from '@nestjs/common';
 import {
   getChannelInviteLink,
+  getPublicUrlFromDirectPath,
   WhatsappSession,
 } from '@waha/core/abc/session.abc';
 import {
@@ -18,20 +19,21 @@ import {
   ToGroupV2ParticipantsEvent,
   ToGroupV2UpdateEvent,
 } from '@waha/core/engines/webjs/groups.webjs';
-import { LocalAuth } from '@waha/core/engines/webjs/LocalAuth';
 import {
   TagChatstateToPresence,
   TagPresenceToPresence,
 } from '@waha/core/engines/webjs/presence';
-import { WebjsClientCore } from '@waha/core/engines/webjs/WebjsClientCore';
+import {
+  WebjsChannelMessage,
+  WebjsClientCore,
+} from '@waha/core/engines/webjs/WebjsClientCore';
 import {
   CallErrorEvent,
   PAGE_CALL_ERROR_EVENT,
 } from '@waha/core/engines/webjs/WPage';
-import {
-  AvailableInPlusVersion,
-  NotImplementedByEngineError,
-} from '@waha/core/exceptions';
+import { WAMimeType } from '@waha/core/media/WAMimeType';
+import { detectMimetype } from '@waha/utils/files';
+import { NotImplementedByEngineError } from '@waha/core/exceptions';
 import { IMediaEngineProcessor } from '@waha/core/media/IMediaEngineProcessor';
 import { LottieMediaProcessorWrapper } from '@waha/core/media/LottieMediaProcessorWrapper';
 import { QR } from '@waha/core/QR';
@@ -47,6 +49,7 @@ import {
   Channel,
   ChannelListResult,
   ChannelMessage,
+  ChannelPublicInfo,
   ChannelRole,
   ChannelSearchByText,
   ChannelSearchByView,
@@ -75,11 +78,12 @@ import {
   MessageImageRequest,
   MessageLocationRequest,
   MessagePollRequest,
+  MessagePollVoteRequest,
   MessageReactionRequest,
   MessageReplyRequest,
   MessageStarRequest,
   MessageTextRequest,
-  MessageVoiceRequest,
+  MessageVideoRequest,
   SendSeenRequest,
   WANumberExistResult,
 } from '@waha/structures/chatting.dto';
@@ -122,7 +126,14 @@ import {
 } from '@waha/structures/responses.dto';
 import { BrowserTraceQuery } from '@waha/structures/server.debug.dto';
 import { MeInfo } from '@waha/structures/sessions.dto';
-import { DeleteStatusRequest, TextStatus } from '@waha/structures/status.dto';
+import {
+  BROADCAST_ID,
+  DeleteStatusRequest,
+  ImageStatus,
+  TextStatus,
+  VideoStatus,
+  VoiceStatus,
+} from '@waha/structures/status.dto';
 import {
   EnginePayload,
   PollVote as WAHAPollVote,
@@ -173,6 +184,7 @@ import {
 } from 'whatsapp-web.js/src/structures';
 
 import { WAJSPresenceChatStateType, WebJSPresence } from './types';
+import { WebJSAuthFactory } from './WebJSAuthFactory';
 import {
   isJidCus,
   isJidGroup,
@@ -200,6 +212,8 @@ export interface WebJSConfig {
 
 export class WhatsappSessionWebJSCore extends WhatsappSession {
   private START_ATTEMPT_DELAY_SECONDS = 2;
+
+  authFactory = new WebJSAuthFactory();
 
   engine = WAHAEngine.WEBJS;
   protected engineConfig?: WebJSConfig;
@@ -284,14 +298,13 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
   }
 
   protected async buildClient() {
+    const authStrategy = await this.authFactory.buildAuth(
+      this.sessionStore,
+      this.name,
+      this.loggerBuilder,
+    );
     const clientOptions = this.getClientOptions();
-    const base = process.env.WAHA_LOCAL_STORE_BASE_DIR || './.sessions';
-    clientOptions.authStrategy = new LocalAuth({
-      clientId: this.name,
-      dataPath: `${base}/webjs/default`,
-      logger: this.logger,
-      rmMaxRetries: undefined,
-    });
+    clientOptions.authStrategy = authStrategy;
     this.addProxyConfig(clientOptions);
     return new WebjsClientCore(clientOptions, this.getWebjsTagsFlag());
   }
@@ -746,12 +759,48 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
     return true;
   }
 
-  protected setProfilePicture(file: BinaryFile | RemoteFile): Promise<boolean> {
-    throw new AvailableInPlusVersion();
+  private async fileToMedia(
+    file: BinaryFile | RemoteFile,
+  ): Promise<MessageMedia> {
+    if ('url' in file) {
+      const mediaOptions = { unsafeMime: true };
+      const media = await MessageMedia.fromUrl(file.url, mediaOptions);
+      media.mimetype = file.mimetype || media.mimetype;
+      media.filename = file.filename || media.filename;
+      return media;
+    }
+    return new MessageMedia(file.mimetype, file.data, file.filename);
   }
 
-  protected deleteProfilePicture(): Promise<boolean> {
-    throw new AvailableInPlusVersion();
+  @Activity()
+  protected async setProfilePicture(
+    file: BinaryFile | RemoteFile,
+  ): Promise<boolean> {
+    const media = await this.fileToMedia(file);
+    return await this.whatsapp.setProfilePicture(media);
+  }
+
+  protected async deleteProfilePicture(): Promise<boolean> {
+    return await this.whatsapp.deleteProfilePicture();
+  }
+
+  /**
+   * Groups methods
+   */
+  @Activity()
+  protected async setGroupPicture(
+    id: string,
+    file: BinaryFile | RemoteFile,
+  ): Promise<boolean> {
+    const media = await this.fileToMedia(file);
+    const groupChat = (await this.whatsapp.getChatById(id)) as GroupChat;
+    return await groupChat.setPicture(media);
+  }
+
+  @Activity()
+  protected async deleteGroupPicture(id: string): Promise<boolean> {
+    const groupChat = (await this.whatsapp.getChatById(id)) as GroupChat;
+    return await groupChat.deletePicture();
   }
 
   /**
@@ -845,20 +894,137 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
     );
   }
 
-  sendImage(request: MessageImageRequest) {
-    throw new AvailableInPlusVersion();
+  @Activity()
+  async sendFile(request: MessageFileRequest) {
+    const media = await this.fileToMedia(request.file);
+    if (!media.mimetype) {
+      media.mimetype = await detectMimetype(Buffer.from(media.data, 'base64'));
+    }
+    let options = this.getMessageOptions(request);
+    options = {
+      ...options,
+      sendMediaAsDocument: true,
+      caption: request.caption,
+    };
+    return this.whatsapp.sendMessage(
+      this.ensureSuffix(request.chatId),
+      media,
+      options,
+    );
   }
 
-  sendFile(request: MessageFileRequest) {
-    throw new AvailableInPlusVersion();
+  @Activity()
+  async sendImage(request: MessageImageRequest) {
+    const media = await this.fileToMedia(request.file);
+    media.mimetype = media.mimetype || WAMimeType.IMAGE;
+    let options = this.getMessageOptions(request);
+    options = {
+      ...options,
+      caption: request.caption,
+    };
+    return this.whatsapp.sendMessage(
+      this.ensureSuffix(request.chatId),
+      media,
+      options,
+    );
   }
 
-  sendVoice(request: MessageVoiceRequest) {
-    throw new AvailableInPlusVersion();
+  @Activity()
+  async sendVoice(request) {
+    const media = await this.fileToMedia(request.file);
+    if (request.convert) {
+      await this.convertVoice(media);
+    }
+    media.mimetype = request.file.mimetype || WAMimeType.VOICE;
+    let options = this.getMessageOptions(request);
+    options = {
+      ...options,
+      sendAudioAsVoice: true,
+    };
+    return this.whatsapp.sendMessage(
+      this.ensureSuffix(request.chatId),
+      media,
+      options,
+    );
   }
 
-  sendButtonsReply(request: MessageButtonReply) {
-    throw new AvailableInPlusVersion();
+  @Activity()
+  async sendVideo(request: MessageVideoRequest) {
+    this.checkBrowserIsChrome();
+    const media = await this.fileToMedia(request.file);
+    media.mimetype = media.mimetype || WAMimeType.VIDEO;
+    if (request.convert) {
+      await this.convertVideo(media);
+    }
+
+    let options = this.getMessageOptions(request);
+    options = {
+      ...options,
+      caption: request.caption,
+    };
+    return this.whatsapp.sendMessage(
+      this.ensureSuffix(request.chatId),
+      media,
+      options,
+    );
+  }
+
+  private async convertVideo(media: MessageMedia) {
+    let content: Buffer<ArrayBufferLike> = Buffer.from(media.data, 'base64');
+    content = await this.mediaConverter.video(content);
+    media.data = content.toString('base64');
+    media.mimetype = WAMimeType.VIDEO;
+    media.filename = null;
+    media.filesize = null;
+  }
+
+  private async convertVoice(media: MessageMedia) {
+    let content: Buffer<ArrayBufferLike> = Buffer.from(media.data, 'base64');
+    content = await this.mediaConverter.voice(content);
+    media.data = content.toString('base64');
+    media.mimetype = WAMimeType.VOICE;
+    media.filename = null;
+    media.filesize = null;
+  }
+
+  @Activity()
+  async sendPollVote(request: MessagePollVoteRequest) {
+    const message = await this.whatsapp.getMessageById(request.pollMessageId);
+    if (!message) {
+      throw new UnprocessableEntityException(
+        `Poll message not found: ${request.pollMessageId}`,
+      );
+    }
+    return message.vote(request.votes);
+  }
+
+  @Activity()
+  async sendButtonsReply(request: MessageButtonReply) {
+    const options = this.getMessageOptions(request);
+    const extra: any = {
+      type: 'buttons_response',
+      kind: 'buttonsResponse',
+      buttonsResponse: {
+        selectedButtonId: request.selectedButtonID,
+        selectedDisplayText: request.selectedDisplayText,
+        type: 1,
+      },
+      viewMode: 'VISIBLE',
+    };
+    options.extra = extra;
+    return this.whatsapp.sendMessage(
+      this.ensureSuffix(request.chatId),
+      request.selectedDisplayText,
+      options,
+    );
+  }
+
+  private checkBrowserIsChrome() {
+    if (!IsChrome) {
+      const msg =
+        'Use "devlikeapro/waha:chrome" docker image to send video in WEBJS';
+      throw new UnprocessableEntityException(msg);
+    }
   }
 
   @Activity()
@@ -1460,23 +1626,85 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
   /**
    * Channels methods
    */
-  public searchChannelsByView(
+  @Activity()
+  public async searchChannelsByView(
     query: ChannelSearchByView,
   ): Promise<ChannelListResult> {
-    throw new AvailableInPlusVersion();
+    const params = {
+      view: query.view || 'TRENDING',
+      countryCodes: query.countries,
+      cursorToken: query.startCursor,
+      categories: query.categories,
+      limit: query.limit,
+    };
+    const data = await this.whatsapp.searchChannelsView(params);
+    return this.channelsRawDataToResponse(data);
   }
 
-  public searchChannelsByText(
+  @Activity()
+  public async searchChannelsByText(
     query: ChannelSearchByText,
   ): Promise<ChannelListResult> {
-    throw new AvailableInPlusVersion();
+    const params = {
+      searchText: query.text,
+      cursorToken: query.startCursor,
+      categories: query.categories,
+      limit: query.limit,
+    };
+    const data = await this.whatsapp.searchChannelsText(params);
+    return this.channelsRawDataToResponse(data);
   }
 
+  private channelsRawDataToResponse(data: any): ChannelListResult {
+    const pageInfo = data.pageInfo;
+    const newsletters = data.newsletters;
+    return {
+      page: {
+        startCursor: pageInfo.startCursor,
+        endCursor: pageInfo.endCursor,
+        hasNextPage: pageInfo.hasNextPage,
+        hasPreviousPage: pageInfo.hasPreviousPage,
+      },
+      channels: newsletters.map(NewsletterMetadataToChannel),
+    };
+  }
+
+  @Activity()
   public async previewChannelMessages(
     inviteCode: string,
     query: PreviewChannelMessages,
   ): Promise<ChannelMessage[]> {
-    throw new AvailableInPlusVersion();
+    const channelMessages = await this.whatsapp.channelFetchMessageByInvite(
+      inviteCode,
+      query.limit,
+    );
+    const promises = [];
+    for (const msg of channelMessages) {
+      promises.push(
+        this.WebjsChannelMessageToChannelMessage(msg, query.downloadMedia),
+      );
+    }
+    return await Promise.all(promises);
+  }
+
+  private async WebjsChannelMessageToChannelMessage(
+    channelMessage: WebjsChannelMessage,
+    downloadMedia: boolean,
+  ): Promise<ChannelMessage> {
+    const message = await this.processIncomingMessage(
+      channelMessage.message,
+      downloadMedia,
+    );
+    const reactions = {};
+    for (const reaction of channelMessage.reactions.sort((x) => -x.count)) {
+      reactions[reaction.reaction] = reaction.count;
+    }
+
+    return {
+      message: message,
+      reactions: reactions,
+      viewCount: channelMessage.viewCount,
+    };
   }
 
   protected ChatToChannel(chat: WEBJSChannel): Channel {
@@ -1678,6 +1906,44 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
         "WEBJS doesn't accept 'contacts'. Remove the field to send status to all contacts.";
       throw new UnprocessableEntityException(msg);
     }
+  }
+
+  @Activity()
+  public async sendImageStatus(status: ImageStatus) {
+    this.checkStatusRequest(status);
+    const media = await this.fileToMedia(status.file);
+    const options = {
+      caption: status.caption,
+    };
+    return this.whatsapp.sendMessage(BROADCAST_ID, media, options);
+  }
+
+  @Activity()
+  public async sendVoiceStatus(status: VoiceStatus) {
+    this.checkStatusRequest(status);
+    const media = await this.fileToMedia(status.file);
+    if (status.convert) {
+      await this.convertVoice(media);
+    }
+    media.mimetype = status.file.mimetype || WAMimeType.VOICE;
+    const options = {
+      sendAudioAsVoice: true,
+    };
+    return this.whatsapp.sendMessage(BROADCAST_ID, media, options);
+  }
+
+  @Activity()
+  public async sendVideoStatus(status: VideoStatus) {
+    this.checkBrowserIsChrome();
+    this.checkStatusRequest(status);
+    const media = await this.fileToMedia(status.file);
+    if (status.convert) {
+      await this.convertVideo(media);
+    }
+    const options = {
+      caption: status.caption,
+    };
+    return this.whatsapp.sendMessage(BROADCAST_ID, media, options);
   }
 
   @Activity()
@@ -2247,6 +2513,29 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
       linkPreview: request.linkPreview,
     };
   }
+}
+
+function NewsletterMetadataToChannel(data: any): ChannelPublicInfo {
+  const pictureDirectPath =
+    data.newsletterPictureMetadataMixin.picture?.[0]
+      .queryPictureDirectPathOrEmptyResponseMixinGroup?.value?.directPath;
+  const pictureUrl = getPublicUrlFromDirectPath(pictureDirectPath);
+  return {
+    id: data.idJid,
+    name: data.newsletterNameMetadataMixin.nameElementValue,
+    picture: pictureUrl,
+    description:
+      data.newsletterDescriptionMetadataMixin
+        .descriptionQueryDescriptionResponseMixin.elementValue,
+    invite: getChannelInviteLink(
+      data.newsletterInviteLinkMetadataMixin.inviteCode,
+    ),
+    subscribersCount: Number(
+      data.newsletterSubscribersMetadataMixin.subscribersCount,
+    ),
+    verified:
+      data.newsletterVerificationMetadataMixin.verificationState === 'verified',
+  };
 }
 
 export class WEBJSEngineMediaProcessor

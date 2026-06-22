@@ -1,8 +1,6 @@
 import { getBrowserExecutablePath as getBrowserExecutablePathAutodetect } from '@waha/core/abc/session.browser';
-import {
-  CoreMediaConverter,
-  IMediaConverter,
-} from '@waha/core/media/IConverter';
+import { IMediaConverter } from '@waha/core/media/IConverter';
+import { Ffmpeg } from '@waha/core/utils/ffmpeg';
 import { MessagesForRead } from '@waha/core/utils/convertors';
 import {
   IgnoreJidConfig,
@@ -205,7 +203,7 @@ export abstract class WhatsappSession {
 
   private presenceOfflineTimeout?: ReturnType<typeof setTimeout>;
 
-  public mediaConverter: IMediaConverter = new CoreMediaConverter();
+  public mediaConverter: IMediaConverter;
 
   public constructor({
     name,
@@ -225,6 +223,7 @@ export abstract class WhatsappSession {
     this.proxyConfig = proxyConfig;
     this.loggerBuilder = loggerBuilder;
     this.logger = loggerBuilder.child({ name: 'WhatsappSession' });
+    this.mediaConverter = new Ffmpeg(this.name, this.logger);
     this.events2 = new DefaultMap<WAHAEvents, SwitchObservable<any>>(
       (key) =>
         new SwitchObservable((obs$) => {

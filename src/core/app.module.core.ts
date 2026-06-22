@@ -2,7 +2,7 @@ import * as process from 'node:process';
 
 import { INestApplication, MiddlewareConsumer, Module } from '@nestjs/common';
 import { Provider } from '@nestjs/common/interfaces/modules/provider.interface';
-import { ConfigModule } from '@nestjs/config';
+import { ConditionalModule, ConfigModule } from '@nestjs/config';
 import { APP_INTERCEPTOR } from '@nestjs/core';
 import { PassportModule } from '@nestjs/passport';
 import { ServeStaticModule } from '@nestjs/serve-static';
@@ -26,6 +26,10 @@ import { WPPEngineConfigService } from '@waha/core/config/WPPEngineConfigService
 import { WebJSEngineConfigService } from '@waha/core/config/WebJSEngineConfigService';
 import { MediaLocalStorageModule } from '@waha/core/media/local/media.local.storage.module';
 import { MediaLocalStorageConfig } from '@waha/core/media/local/MediaLocalStorageConfig';
+import { MediaPsqlStorageModule } from '@waha/core/media/psql/media.psql.storage.module';
+import { MediaS3StorageModule } from '@waha/core/media/s3/media.s3.storage.module';
+import { CheckFreeDiskSpaceIndicator } from '@waha/core/health/CheckFreeDiskSpaceIndicator';
+import { MongoStoreHealthIndicator } from '@waha/core/health/MongoStoreHealthIndicator';
 import { ChannelsInfoServiceCore } from '@waha/core/services/ChannelsInfoServiceCore';
 import { parseBool } from '@waha/helpers';
 import { BufferJsonReplacerInterceptor } from '@waha/nestjs/BufferJsonReplacerInterceptor';
@@ -34,6 +38,7 @@ import {
   getPinoHttpUseLevel,
   getPinoLogLevel,
   getPinoTransport,
+  isDebugEnabled,
   redactUrlParams,
 } from '@waha/utils/logging';
 import * as Joi from 'joi';
@@ -144,10 +149,25 @@ const IMPORTS_MEDIA = [
         .default('LOCAL'),
     }),
   }),
-  MediaLocalStorageModule,
+  ConditionalModule.registerWhen(
+    MediaLocalStorageModule,
+    (env: NodeJS.ProcessEnv) =>
+      !env['WAHA_MEDIA_STORAGE'] || env['WAHA_MEDIA_STORAGE'] == 'LOCAL',
+    { debug: isDebugEnabled() },
+  ),
+  ConditionalModule.registerWhen(
+    MediaS3StorageModule,
+    (env: NodeJS.ProcessEnv) => env['WAHA_MEDIA_STORAGE'] == 'S3',
+    { debug: isDebugEnabled() },
+  ),
+  ConditionalModule.registerWhen(
+    MediaPsqlStorageModule,
+    (env: NodeJS.ProcessEnv) => env['WAHA_MEDIA_STORAGE'] == 'POSTGRESQL',
+    { debug: isDebugEnabled() },
+  ),
 ];
 
-const IMPORTS = [...IMPORTS_CORE, ...IMPORTS_MEDIA];
+export const IMPORTS = [...IMPORTS_CORE, ...IMPORTS_MEDIA];
 
 export const CONTROLLERS = [
   AuthController,
@@ -189,6 +209,8 @@ export const PROVIDERS_BASE: Provider[] = [
   EngineConfigService,
   WebsocketGatewayCore,
   MediaLocalStorageConfig,
+  MongoStoreHealthIndicator,
+  CheckFreeDiskSpaceIndicator,
   WebSocketAuth,
   ApiKeyStrategy,
   ApiKeyAuthService,
@@ -203,7 +225,7 @@ export const PROVIDERS_BASE: Provider[] = [
   ...AppsModuleExports.providers,
 ];
 
-const PROVIDERS = [
+export const PROVIDERS = [
   {
     provide: SessionManager,
     useClass: SessionManagerCore,
