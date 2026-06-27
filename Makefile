@@ -61,6 +61,17 @@ gows:
 	(export PATH=${HOME}/go/bin:${PATH} || echo failed) && \
 	make all
 
+ORIGIN ?= waha-plus
+CORE_REMOTE ?= waha
+
+release:
+	node scripts/release.js
+
+release-push: release
+	git push $(ORIGIN) core plus
+	git push --force-with-lease $(ORIGIN) dev
+	git push $(CORE_REMOTE) core
+
 up-dashboard:
 	node scripts/up-dashboard.js
 
