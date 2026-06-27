@@ -2959,6 +2959,19 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
 }
 
 /**
+ * gRPC status codes returned by GOWS DownloadMedia that represent a definitive
+ * failure (the media cannot be fetched right now and retrying won't help). Used
+ * to tag the error as non-retriable so MediaManager doesn't re-issue the call.
+ */
+const NON_RETRIABLE_DOWNLOAD_MEDIA_CODES: Set<number> = new Set([
+  grpc.status.FAILED_PRECONDITION,
+  grpc.status.NOT_FOUND,
+  grpc.status.INVALID_ARGUMENT,
+  grpc.status.PERMISSION_DENIED,
+  grpc.status.UNIMPLEMENTED,
+]);
+
+/**
  * Many encrypted stickers carry URL "https://a.whatsapp.net" with no path. If
  * that string is passed to DownloadMedia, the Go client may attempt HTTP GET to
  * that host instead of decrypting via directPath. Real CDN links use hosts
@@ -3062,6 +3075,12 @@ export class GOWSEngineMediaProcessor implements IMediaEngineProcessor<any> {
       } catch (err) {
         if (err?.code === grpc.status.DEADLINE_EXCEEDED) {
           err.message = `DownloadMedia timed out after ${mediaDownloadTimeoutMs}ms for message '${message?.Info?.ID}'`;
+        } else if (NON_RETRIABLE_DOWNLOAD_MEDIA_CODES.has(err?.code)) {
+          // The media is not currently downloadable (e.g. CDN 403 after the
+          // anonymous + media-retry fallbacks, or the object is gone). Retrying
+          // the gRPC call won't help and each attempt can block on a media-retry
+          // wait, so mark it so MediaManager stops retrying.
+          err.nonRetriable = true;
         }
         throw err;
       }

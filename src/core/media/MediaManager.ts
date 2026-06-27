@@ -187,7 +187,14 @@ export class MediaManager implements IMediaManager {
     const retryOptions = this.RETRY_OPTIONS;
     try {
       return await promiseRetry((retry: CallableFunction, number: number) => {
-        return fn().catch(retry);
+        return fn().catch((err: any) => {
+          // Some failures are definitive (e.g. media not downloadable): retrying
+          // won't help and may block, so abort the retry loop immediately.
+          if (err?.nonRetriable) {
+            throw err;
+          }
+          return retry(err);
+        });
       }, retryOptions);
     } catch (error) {
       this.log.error(
