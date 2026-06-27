@@ -664,14 +664,12 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
 
   private async loadClientInfo() {
     const data = await this.whatsapp.pupPage.evaluate(() => {
+      const WAWebUserPrefsMeUser = window.require('WAWebUserPrefsMeUser');
       return {
-        // @ts-ignore
-        ...window.Store.Conn.serialize(),
+        ...window.require('WAWebConnModel').Conn.serialize(),
         wid:
-          // @ts-ignore
-          window.Store.User.getMaybeMePnUser() ||
-          // @ts-ignore
-          window.Store.User.getMaybeMeLidUser(),
+          WAWebUserPrefsMeUser.getMaybeMePnUser() ||
+          WAWebUserPrefsMeUser.getMaybeMeLidUser(),
       };
     });
     this.whatsapp.info = data as any;
