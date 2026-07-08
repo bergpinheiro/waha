@@ -271,6 +271,8 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
   protected me: MeInfo | null;
   public session: messages.Session;
   protected presences: any;
+  protected passkeyChallenge: any = null;
+  protected passkeyConfirmation: { code: string; skipHandoffUX: boolean } | null = null;
 
   private local$ = new Subject<EnginePayload>();
 
@@ -419,6 +421,31 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
       if (data.Event == 'success') {
         return;
       }
+      if (data.Event == 'passkey-request') {
+        // WhatsApp requires a passkey (WebAuthn) to finish pairing this account.
+        this.passkeyChallenge = data.PasskeyRequest?.PublicKey ?? null;
+        this.logger.info('Passkey required to finish pairing');
+        this.status = WAHASessionStatus.PASSKEY_REQUIRED;
+        return;
+      }
+      if (data.Event == 'passkey-confirmation') {
+        const code = data.PasskeyConfirmation?.Code ?? null;
+        const skipHandoffUX = !!data.PasskeyConfirmation?.SkipHandoffUX;
+        this.logger.info({ code, skipHandoffUX }, 'Passkey confirmation code');
+        if (skipHandoffUX) {
+          // WhatsApp says it's safe to confirm without showing the code to the
+          // operator first - send the confirmation right away.
+          this.confirmPasskey().catch((err) =>
+            this.logger.error(err, 'Failed to auto-confirm passkey'),
+          );
+        } else {
+          // Manual case: the operator must see the code, verify it matches the
+          // one shown on their phone, then confirm - surfaced via
+          // getPasskeyConfirmation()/POST .../auth/passkey/confirm.
+          this.passkeyConfirmation = { code, skipHandoffUX };
+        }
+        return;
+      }
       if (data.Event != 'code') {
         this.logger.warn(data, 'Failed QR item event');
         this.status = WAHASessionStatus.FAILED;
@@ -430,6 +457,13 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
       }
       this.qr.save(qr);
       this.printQR(this.qr);
+      if (this.status === WAHASessionStatus.PASSKEY_REQUIRED) {
+        // The underlying whatsmeow QR rotation keeps emitting fresh codes in
+        // parallel while the passkey challenge is pending (it doesn't know
+        // about the passkey step). Don't let that bounce the session back to
+        // SCAN_QR_CODE mid-flow — the operator is busy signing the passkey.
+        return;
+      }
       this.status = WAHASessionStatus.SCAN_QR_CODE;
     });
     events.on(WhatsMeowEvent.PUSH_NAME_SETTING, (data) => {
@@ -662,6 +696,36 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
     );
     this.events2.get(WAHAEvents.CALL_REJECTED).switch(callRejected$);
 
+    //
+    // Passkey
+    //
+    const passkeyRequired$ = all$.pipe(
+      onlyEvent(WhatsMeowEvent.QR_CHANNEL_ITEM),
+      filter((data: any) => data?.Event === 'passkey-request'),
+      map((data: any) => ({
+        session: this.name,
+        url: 'https://web.whatsapp.com',
+        challenge: data?.PasskeyRequest?.PublicKey ?? null,
+      })),
+    );
+    this.events2.get(WAHAEvents.PASSKEY_REQUIRED).switch(passkeyRequired$);
+
+    const passkeyConfirmationRequired$ = all$.pipe(
+      onlyEvent(WhatsMeowEvent.QR_CHANNEL_ITEM),
+      filter(
+        (data: any) =>
+          data?.Event === 'passkey-confirmation' &&
+          !data?.PasskeyConfirmation?.SkipHandoffUX,
+      ),
+      map((data: any) => ({
+        session: this.name,
+        code: data?.PasskeyConfirmation?.Code ?? null,
+      })),
+    );
+    this.events2
+      .get(WAHAEvents.PASSKEY_CONFIRMATION_REQUIRED)
+      .switch(passkeyConfirmationRequired$);
+
     const presence$ = all$.pipe(
       onlyEvent(WhatsMeowEvent.PRESENCE),
       filter((event: any) => this.jids.include(event?.From)),
@@ -847,6 +911,27 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
     const code: string = response.toObject().code;
     this.logger.info(`Your code: ${code}`);
     return { code: code };
+  }
+
+  public async sendPasskeyResponse(responseJson: string): Promise<void> {
+    const request = new messages.PasskeyResponseRequest({
+      session: this.session,
+      response_json: responseJson,
+    });
+    await promisify(this.client.SubmitPasskeyResponse)(request);
+  }
+
+  public async confirmPasskey(): Promise<void> {
+    await promisify(this.client.ConfirmPasskey)(this.session);
+    this.passkeyConfirmation = null;
+  }
+
+  public getPasskeyChallenge(): any {
+    return this.passkeyChallenge;
+  }
+
+  public getPasskeyConfirmation(): { code: string; skipHandoffUX: boolean } | null {
+    return this.passkeyConfirmation;
   }
 
   async unpair() {

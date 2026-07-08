@@ -450,6 +450,22 @@ export abstract class WhatsappSession {
     throw new NotImplementedByEngineError();
   }
 
+  public getPasskeyChallenge(): any {
+    throw new NotImplementedByEngineError();
+  }
+
+  public async sendPasskeyResponse(responseJson: string): Promise<void> {
+    throw new NotImplementedByEngineError();
+  }
+
+  public async confirmPasskey(): Promise<void> {
+    throw new NotImplementedByEngineError();
+  }
+
+  public getPasskeyConfirmation(): { code: string; skipHandoffUX: boolean } | null {
+    throw new NotImplementedByEngineError();
+  }
+
   abstract getScreenshot(): Promise<Buffer>;
 
   public getSessionMeInfo(): MeInfo | null {

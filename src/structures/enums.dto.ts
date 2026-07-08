@@ -2,6 +2,8 @@ export const SECOND = 1000;
 
 export enum WAHAEvents {
   SESSION_STATUS = 'session.status',
+  PASSKEY_REQUIRED = 'passkey.required',
+  PASSKEY_CONFIRMATION_REQUIRED = 'passkey.confirmation.required',
   MESSAGE = 'message',
   MESSAGE_REACTION = 'message.reaction',
   MESSAGE_ANY = 'message.any',
@@ -45,6 +47,7 @@ export enum WAHASessionStatus {
   STOPPED = 'STOPPED',
   STARTING = 'STARTING',
   SCAN_QR_CODE = 'SCAN_QR_CODE',
+  PASSKEY_REQUIRED = 'PASSKEY_REQUIRED',
   WORKING = 'WORKING',
   FAILED = 'FAILED',
 }

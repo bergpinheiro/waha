@@ -38,3 +38,47 @@ export class RequestCodeRequest {
 export class PairingCodeResponse {
   code: string;
 }
+
+export class PasskeyAssertionResponseData {
+  @ApiProperty({
+    description: 'Base64url-encoded clientDataJSON from the authenticator.',
+  })
+  clientDataJSON: string;
+
+  @ApiProperty({
+    description: 'Base64url-encoded authenticatorData from the authenticator.',
+  })
+  authenticatorData: string;
+
+  @ApiProperty({
+    description: 'Base64url-encoded signature from the authenticator.',
+  })
+  signature: string;
+
+  @ApiProperty({
+    description: 'Base64url-encoded user handle, if returned by the authenticator.',
+    required: false,
+  })
+  userHandle?: string;
+}
+
+export class PasskeyAssertionRequest {
+  @ApiProperty({
+    description: 'Credential ID, as returned by navigator.credentials.get().toJSON().',
+  })
+  id: string;
+
+  @ApiProperty({
+    description: 'Base64url-encoded raw credential ID.',
+  })
+  rawId: string;
+
+  @ApiProperty({
+    description: 'Always "public-key".',
+    example: 'public-key',
+  })
+  type: string;
+
+  @ApiProperty({ type: PasskeyAssertionResponseData })
+  response: PasskeyAssertionResponseData;
+}

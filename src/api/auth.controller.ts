@@ -19,6 +19,7 @@ import { SessionManager } from '../core/abc/manager.abc';
 import { WhatsappSession } from '../core/abc/session.abc';
 import { BufferResponseInterceptor } from '../nestjs/BufferResponseInterceptor';
 import {
+  PasskeyAssertionRequest,
   QRCodeFormat,
   QRCodeQuery,
   QRCodeValue,
@@ -67,6 +68,46 @@ class AuthController {
     @Body() request: RequestCodeRequest,
   ) {
     return session.requestCode(request.phoneNumber, request.method, request);
+  }
+
+  @Get('passkey')
+  @SessionApiParam
+  @ApiOperation({
+    summary: 'Get the pending passkey (WebAuthn) challenge, if any.',
+  })
+  getPasskey(@SessionParam session: WhatsappSession) {
+    return session.getPasskeyChallenge();
+  }
+
+  @Post('passkey')
+  @SessionApiParam
+  @ApiOperation({
+    summary: 'Submit a WebAuthn passkey assertion to finish pairing.',
+  })
+  submitPasskey(
+    @SessionParam session: WhatsappSession,
+    @Body() request: PasskeyAssertionRequest,
+  ) {
+    return session.sendPasskeyResponse(JSON.stringify(request));
+  }
+
+  @Get('passkey/confirmation')
+  @SessionApiParam
+  @ApiOperation({
+    summary:
+      'Get the pending passkey confirmation code, if any (manual confirmation-code case only).',
+  })
+  getPasskeyConfirmation(@SessionParam session: WhatsappSession) {
+    return session.getPasskeyConfirmation();
+  }
+
+  @Post('passkey/confirm')
+  @SessionApiParam
+  @ApiOperation({
+    summary: 'Confirm passkey pairing (only needed for the manual code case).',
+  })
+  confirmPasskey(@SessionParam session: WhatsappSession) {
+    return session.confirmPasskey();
   }
 }
 
