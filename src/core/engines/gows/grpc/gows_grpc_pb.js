@@ -488,6 +488,17 @@ function deserialize_messages_PairCodeResponse(buffer_arg) {
   return gows_pb.PairCodeResponse.deserializeBinary(new Uint8Array(buffer_arg));
 }
 
+function serialize_messages_PasskeyResponseRequest(arg) {
+  if (!(arg instanceof gows_pb.PasskeyResponseRequest)) {
+    throw new Error('Expected argument of type messages.PasskeyResponseRequest');
+  }
+  return Buffer.from(arg.serializeBinary());
+}
+
+function deserialize_messages_PasskeyResponseRequest(buffer_arg) {
+  return gows_pb.PasskeyResponseRequest.deserializeBinary(new Uint8Array(buffer_arg));
+}
+
 function serialize_messages_PresenceRequest(arg) {
   if (!(arg instanceof gows_pb.PresenceRequest)) {
     throw new Error('Expected argument of type messages.PresenceRequest');
@@ -763,6 +774,28 @@ startSession: {
     requestDeserialize: deserialize_messages_PairCodeRequest,
     responseSerialize: serialize_messages_PairCodeResponse,
     responseDeserialize: deserialize_messages_PairCodeResponse,
+  },
+  submitPasskeyResponse: {
+    path: '/messages.MessageService/SubmitPasskeyResponse',
+    requestStream: false,
+    responseStream: false,
+    requestType: gows_pb.PasskeyResponseRequest,
+    responseType: gows_pb.Empty,
+    requestSerialize: serialize_messages_PasskeyResponseRequest,
+    requestDeserialize: deserialize_messages_PasskeyResponseRequest,
+    responseSerialize: serialize_messages_Empty,
+    responseDeserialize: deserialize_messages_Empty,
+  },
+  confirmPasskey: {
+    path: '/messages.MessageService/ConfirmPasskey',
+    requestStream: false,
+    responseStream: false,
+    requestType: gows_pb.Session,
+    responseType: gows_pb.Empty,
+    requestSerialize: serialize_messages_Session,
+    requestDeserialize: deserialize_messages_Session,
+    responseSerialize: serialize_messages_Empty,
+    responseDeserialize: deserialize_messages_Empty,
   },
   logout: {
     path: '/messages.MessageService/Logout',

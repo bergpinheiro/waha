@@ -1132,6 +1132,99 @@ export namespace messages {
             return PairCodeResponse.deserialize(bytes);
         }
     }
+    export class PasskeyResponseRequest extends pb_1.Message {
+        #one_of_decls: number[][] = [];
+        constructor(data?: any[] | {
+            session?: Session;
+            response_json?: string;
+        }) {
+            super();
+            pb_1.Message.initialize(this, Array.isArray(data) ? data : [], 0, -1, [], this.#one_of_decls);
+            if (!Array.isArray(data) && typeof data == "object") {
+                if ("session" in data && data.session != undefined) {
+                    this.session = data.session;
+                }
+                if ("response_json" in data && data.response_json != undefined) {
+                    this.response_json = data.response_json;
+                }
+            }
+        }
+        get session() {
+            return pb_1.Message.getWrapperField(this, Session, 1) as Session;
+        }
+        set session(value: Session) {
+            pb_1.Message.setWrapperField(this, 1, value);
+        }
+        get has_session() {
+            return pb_1.Message.getField(this, 1) != null;
+        }
+        get response_json() {
+            return pb_1.Message.getFieldWithDefault(this, 2, "") as string;
+        }
+        set response_json(value: string) {
+            pb_1.Message.setField(this, 2, value);
+        }
+        static fromObject(data: {
+            session?: ReturnType<typeof Session.prototype.toObject>;
+            response_json?: string;
+        }): PasskeyResponseRequest {
+            const message = new PasskeyResponseRequest({});
+            if (data.session != null) {
+                message.session = Session.fromObject(data.session);
+            }
+            if (data.response_json != null) {
+                message.response_json = data.response_json;
+            }
+            return message;
+        }
+        toObject() {
+            const data: {
+                session?: ReturnType<typeof Session.prototype.toObject>;
+                response_json?: string;
+            } = {};
+            if (this.session != null) {
+                data.session = this.session.toObject();
+            }
+            if (this.response_json != null) {
+                data.response_json = this.response_json;
+            }
+            return data;
+        }
+        serialize(): Uint8Array;
+        serialize(w: pb_1.BinaryWriter): void;
+        serialize(w?: pb_1.BinaryWriter): Uint8Array | void {
+            const writer = w || new pb_1.BinaryWriter();
+            if (this.has_session)
+                writer.writeMessage(1, this.session, () => this.session.serialize(writer));
+            if (this.response_json.length)
+                writer.writeString(2, this.response_json);
+            if (!w)
+                return writer.getResultBuffer();
+        }
+        static deserialize(bytes: Uint8Array | pb_1.BinaryReader): PasskeyResponseRequest {
+            const reader = bytes instanceof pb_1.BinaryReader ? bytes : new pb_1.BinaryReader(bytes), message = new PasskeyResponseRequest();
+            while (reader.nextField()) {
+                if (reader.isEndGroup())
+                    break;
+                switch (reader.getFieldNumber()) {
+                    case 1:
+                        reader.readMessage(message.session, () => message.session = Session.deserialize(reader));
+                        break;
+                    case 2:
+                        message.response_json = reader.readString();
+                        break;
+                    default: reader.skipField();
+                }
+            }
+            return message;
+        }
+        serializeBinary(): Uint8Array {
+            return this.serialize();
+        }
+        static deserializeBinary(bytes: Uint8Array): PasskeyResponseRequest {
+            return PasskeyResponseRequest.deserialize(bytes);
+        }
+    }
     export class Empty extends pb_1.Message {
         #one_of_decls: number[][] = [];
         constructor(data?: any[] | {}) {
@@ -11053,6 +11146,24 @@ export namespace messages {
                 responseSerialize: (message: PairCodeResponse) => Buffer.from(message.serialize()),
                 responseDeserialize: (bytes: Buffer) => PairCodeResponse.deserialize(new Uint8Array(bytes))
             },
+            SubmitPasskeyResponse: {
+                path: "/messages.MessageService/SubmitPasskeyResponse",
+                requestStream: false,
+                responseStream: false,
+                requestSerialize: (message: PasskeyResponseRequest) => Buffer.from(message.serialize()),
+                requestDeserialize: (bytes: Buffer) => PasskeyResponseRequest.deserialize(new Uint8Array(bytes)),
+                responseSerialize: (message: Empty) => Buffer.from(message.serialize()),
+                responseDeserialize: (bytes: Buffer) => Empty.deserialize(new Uint8Array(bytes))
+            },
+            ConfirmPasskey: {
+                path: "/messages.MessageService/ConfirmPasskey",
+                requestStream: false,
+                responseStream: false,
+                requestSerialize: (message: Session) => Buffer.from(message.serialize()),
+                requestDeserialize: (bytes: Buffer) => Session.deserialize(new Uint8Array(bytes)),
+                responseSerialize: (message: Empty) => Buffer.from(message.serialize()),
+                responseDeserialize: (bytes: Buffer) => Empty.deserialize(new Uint8Array(bytes))
+            },
             Logout: {
                 path: "/messages.MessageService/Logout",
                 requestStream: false,
@@ -11599,6 +11710,8 @@ export namespace messages {
         abstract StopSession(call: grpc_1.ServerUnaryCall<Session, Empty>, callback: grpc_1.sendUnaryData<Empty>): void;
         abstract GetSessionState(call: grpc_1.ServerUnaryCall<Session, SessionStateResponse>, callback: grpc_1.sendUnaryData<SessionStateResponse>): void;
         abstract RequestCode(call: grpc_1.ServerUnaryCall<PairCodeRequest, PairCodeResponse>, callback: grpc_1.sendUnaryData<PairCodeResponse>): void;
+        abstract SubmitPasskeyResponse(call: grpc_1.ServerUnaryCall<PasskeyResponseRequest, Empty>, callback: grpc_1.sendUnaryData<Empty>): void;
+        abstract ConfirmPasskey(call: grpc_1.ServerUnaryCall<Session, Empty>, callback: grpc_1.sendUnaryData<Empty>): void;
         abstract Logout(call: grpc_1.ServerUnaryCall<Session, Empty>, callback: grpc_1.sendUnaryData<Empty>): void;
         abstract SetProfileName(call: grpc_1.ServerUnaryCall<ProfileNameRequest, Empty>, callback: grpc_1.sendUnaryData<Empty>): void;
         abstract SetProfileStatus(call: grpc_1.ServerUnaryCall<ProfileStatusRequest, Empty>, callback: grpc_1.sendUnaryData<Empty>): void;
@@ -11675,6 +11788,12 @@ export namespace messages {
         };
         RequestCode: GrpcUnaryServiceInterface<PairCodeRequest, PairCodeResponse> = (message: PairCodeRequest, metadata: grpc_1.Metadata | grpc_1.CallOptions | grpc_1.requestCallback<PairCodeResponse>, options?: grpc_1.CallOptions | grpc_1.requestCallback<PairCodeResponse>, callback?: grpc_1.requestCallback<PairCodeResponse>): grpc_1.ClientUnaryCall => {
             return super.RequestCode(message, metadata, options, callback);
+        };
+        SubmitPasskeyResponse: GrpcUnaryServiceInterface<PasskeyResponseRequest, Empty> = (message: PasskeyResponseRequest, metadata: grpc_1.Metadata | grpc_1.CallOptions | grpc_1.requestCallback<Empty>, options?: grpc_1.CallOptions | grpc_1.requestCallback<Empty>, callback?: grpc_1.requestCallback<Empty>): grpc_1.ClientUnaryCall => {
+            return super.SubmitPasskeyResponse(message, metadata, options, callback);
+        };
+        ConfirmPasskey: GrpcUnaryServiceInterface<Session, Empty> = (message: Session, metadata: grpc_1.Metadata | grpc_1.CallOptions | grpc_1.requestCallback<Empty>, options?: grpc_1.CallOptions | grpc_1.requestCallback<Empty>, callback?: grpc_1.requestCallback<Empty>): grpc_1.ClientUnaryCall => {
+            return super.ConfirmPasskey(message, metadata, options, callback);
         };
         Logout: GrpcUnaryServiceInterface<Session, Empty> = (message: Session, metadata: grpc_1.Metadata | grpc_1.CallOptions | grpc_1.requestCallback<Empty>, options?: grpc_1.CallOptions | grpc_1.requestCallback<Empty>, callback?: grpc_1.requestCallback<Empty>): grpc_1.ClientUnaryCall => {
             return super.Logout(message, metadata, options, callback);
