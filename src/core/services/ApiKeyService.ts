@@ -3,12 +3,31 @@ import {
   UnprocessableEntityException,
 } from '@nestjs/common';
 import { SessionManager } from '@waha/core/abc/manager.abc';
+import { SessionActions } from '@waha/core/auth/casl.types';
 import {
   ApiKey,
   IApiKeyRepository,
 } from '@waha/core/storage/IApiKeyRepository';
 import { ApiKeyDTO, ApiKeyRequest } from '@waha/structures/apikeys.dto';
 import { generatePrefixedId, generateSecret } from '@waha/utils/ids';
+
+const MEDIA_KEY_ACTIONS: SessionActions = {
+  read: false,
+  send: false,
+  control: false,
+  setting: false,
+  app: false,
+  delete: false,
+};
+
+const CONTROL_KEY_ACTIONS: SessionActions = {
+  read: false,
+  send: false,
+  control: true,
+  setting: false,
+  app: false,
+  delete: false,
+};
 
 function CheckInvariant(
   apiKey: Pick<ApiKey, 'isAdmin' | 'session' | 'actions'>,
@@ -76,6 +95,46 @@ export class ApiKeyService {
     CheckInvariant(apikey);
     await this.repository.upsert(apikey);
     return this.toDTO(apikey);
+  }
+
+  private async createOrGetScopedKey(
+    session: string,
+    variant: string,
+    actions: SessionActions,
+  ): Promise<ApiKeyDTO> {
+    const exists = await this.manager.exists(session);
+    if (!exists) {
+      throw new UnprocessableEntityException(
+        `Session "${session}" does not exist`,
+      );
+    }
+    // Deterministic id keeps this idempotent: repeated calls reuse the same
+    // stored secret instead of minting a new key every time.
+    const id = `key_id_${variant}_${session}`;
+    const existing = await this.repository.getById(id);
+    if (existing) {
+      return this.toDTO(existing);
+    }
+    const apikey: ApiKey = {
+      id: id,
+      key: `key_${generateSecret(32)}`,
+      isActive: true,
+      isAdmin: false,
+      session: session,
+      actions: actions,
+      app_id: null,
+    };
+    CheckInvariant(apikey);
+    await this.repository.upsert(apikey);
+    return this.toDTO(apikey);
+  }
+
+  async createOrGetMediaKey(session: string): Promise<ApiKeyDTO> {
+    return this.createOrGetScopedKey(session, 'media', MEDIA_KEY_ACTIONS);
+  }
+
+  async createOrGetControlKey(session: string): Promise<ApiKeyDTO> {
+    return this.createOrGetScopedKey(session, 'control', CONTROL_KEY_ACTIONS);
   }
 
   async list(): Promise<ApiKeyDTO[]> {

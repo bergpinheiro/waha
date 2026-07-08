@@ -31,4 +31,28 @@ export class McpController {
     });
     return ImageMcpResponse(Buffer.from(response.data));
   }
+
+  protected async scopedApiKey(
+    url: string,
+    session: string,
+  ): Promise<string | null> {
+    const response = await this.request({
+      method: 'POST',
+      url: url,
+      data: { session: session },
+    });
+    if (response.status >= 200 && response.status < 300) {
+      return response.data?.key ?? null;
+    }
+    // e.g. 403 (caller lacks the scope) or 422 (session missing) → fall back
+    return null;
+  }
+
+  protected async mediaApiKey(session: string): Promise<string | null> {
+    return this.scopedApiKey('/api/keys/media', session);
+  }
+
+  protected async controlApiKey(session: string): Promise<string | null> {
+    return this.scopedApiKey('/api/keys/control', session);
+  }
 }

@@ -18,10 +18,22 @@ import {
   UnpinMessageInput,
 } from '@waha/apps/mcp/tools/chats.zod';
 
-function FetchMediaUsingApiKeyContent(key: string) {
+function FetchMediaContent(key: string | null) {
+  if (key) {
+    return {
+      type: 'text' as const,
+      text:
+        `To fetch media use "X-Api-Key: ${key}" HTTP header. ` +
+        `To open it in a browser add "?x-api-key=${key}" to the query params. ` +
+        `This is a media-only API key: it can ONLY download files for this session — ` +
+        `it cannot read messages, send, or control the session.`,
+    };
+  }
   return {
     type: 'text' as const,
-    text: `To fetch media use "X-Api-Key: ${key}" HTTP header. If the user wants to open it - add "?x-api-key=${key}" to query params`,
+    text:
+      `To fetch media, use your existing WAHA API key in the "X-Api-Key" HTTP header ` +
+      `(or append "?x-api-key=YOUR_API_KEY" to open it in a browser).`,
   };
 }
 
@@ -170,7 +182,8 @@ export class ChatTools extends McpController {
       JSON.stringify({ status: response.status, response: responseText }),
     );
     if (query.downloadMedia) {
-      result.content.push(FetchMediaUsingApiKeyContent(this.api.key));
+      const mediaKey = await this.mediaApiKey(session);
+      result.content.push(FetchMediaContent(mediaKey));
     }
     return result;
   }
@@ -219,7 +232,8 @@ export class ChatTools extends McpController {
       params: query,
     });
     if (query.downloadMedia) {
-      result.content.push(FetchMediaUsingApiKeyContent(this.api.key));
+      const mediaKey = await this.mediaApiKey(session);
+      result.content.push(FetchMediaContent(mediaKey));
     }
     return result;
   }

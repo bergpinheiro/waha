@@ -8,12 +8,15 @@ import {
   ScreenshotInput,
 } from '@waha/apps/mcp/tools/auth.zod';
 
-function AuthContent(key: string): any {
+function AuthContent(key: string | null): any {
+  const open = key
+    ? `add "?x-api-key=${key}" to the query params (this is a control-only key scoped to this session)`
+    : `append "?x-api-key=YOUR_API_KEY" to the query params, using the key you already have`;
   return {
     type: 'text' as const,
     text: `
 You can either ask the user to scan a QR code or provide a phone number and call auth-request-code. auth-request-code is preferable, so ask for the phone number and pass it in international format without +.
-If the user wants to open the QR code or screenshot in a browser, add "?x-api-key=${key}" to the query params.
+If the user wants to open the QR code or screenshot in a browser, ${open}.
 `,
   };
 }
@@ -39,7 +42,8 @@ export class AuthTools extends McpController {
   })
   async authQR({ session }: z.infer<typeof AuthQRInput>) {
     const result = await this.imageRequest(`/api/${session}/auth/qr`);
-    result.content.push(AuthContent(this.api.key));
+    const key = await this.controlApiKey(session);
+    result.content.push(AuthContent(key));
     return result;
   }
 
@@ -58,7 +62,8 @@ export class AuthTools extends McpController {
     const result = await this.imageRequest(
       `/api/screenshot?session=${session}`,
     );
-    result.content.push(AuthContent(this.api.key));
+    const key = await this.controlApiKey(session);
+    result.content.push(AuthContent(key));
     return result;
   }
 

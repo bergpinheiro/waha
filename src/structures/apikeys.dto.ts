@@ -76,6 +76,12 @@ export class ApiKeyDTO {
   actions: SessionActions | null;
 }
 
+export class ScopedApiKeyRequest {
+  @ApiProperty({ example: 'default' })
+  @SessionName()
+  session: string;
+}
+
 export class ApiKeyRequest {
   @ApiProperty({ example: false })
   @IsBoolean()

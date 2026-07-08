@@ -12,12 +12,16 @@ import {
 import { ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger';
 import { SessionManager } from '@waha/core/abc/manager.abc';
 import { Action } from '@waha/core/auth/casl.types';
-import { CanServer } from '@waha/core/auth/policies';
+import { CanServer, CanSession, FromBody } from '@waha/core/auth/policies';
 import { CheckPolicies } from '@waha/core/auth/policies.decorator';
 import { PoliciesGuard } from '@waha/core/auth/policies.guard';
 import { ApiKeyService } from '@waha/core/services/ApiKeyService';
 import { WAHAValidationPipe } from '@waha/nestjs/pipes/WAHAValidationPipe';
-import { ApiKeyDTO, ApiKeyRequest } from '@waha/structures/apikeys.dto';
+import {
+  ApiKeyDTO,
+  ApiKeyRequest,
+  ScopedApiKeyRequest,
+} from '@waha/structures/apikeys.dto';
 
 @ApiSecurity('api_key')
 @Controller('api/keys')
@@ -42,6 +46,26 @@ export class ApiKeysController {
   @ApiOperation({ summary: 'Get all API keys' })
   async list(): Promise<ApiKeyDTO[]> {
     return this.service.list();
+  }
+
+  @Post('/media')
+  @ApiOperation({
+    summary: 'Create or get a media-download-only API key for a session',
+  })
+  @CheckPolicies(CanSession(Action.Read, FromBody('session')))
+  @UsePipes(new WAHAValidationPipe())
+  async media(@Body() body: ScopedApiKeyRequest): Promise<ApiKeyDTO> {
+    return this.service.createOrGetMediaKey(body.session);
+  }
+
+  @Post('/control')
+  @ApiOperation({
+    summary: 'Create or get a control-only API key for a session',
+  })
+  @CheckPolicies(CanSession(Action.Control, FromBody('session')))
+  @UsePipes(new WAHAValidationPipe())
+  async control(@Body() body: ScopedApiKeyRequest): Promise<ApiKeyDTO> {
+    return this.service.createOrGetControlKey(body.session);
   }
 
   @Put('/:id')
