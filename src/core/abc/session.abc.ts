@@ -64,6 +64,10 @@ import { distinctUntilChanged, map } from 'rxjs/operators';
 import { MessageId } from 'whatsapp-web.js';
 
 import {
+  PasskeyChallenge,
+  PasskeyConfirmationResponse,
+} from '../../structures/auth.dto';
+import {
   ChatRequest,
   CheckNumberStatusQuery,
   EditMessageRequest,
@@ -163,6 +167,19 @@ export interface SessionParams {
   ignore: IgnoreJidConfig;
 }
 
+/**
+ * A status change, along with the extra info that belongs to that status
+ * (if any) - like the passkey challenge for PASSKEY_REQUIRED.
+ */
+interface SessionStatusUpdate {
+  status: WAHASessionStatus;
+  data: any;
+}
+
+interface SessionStatusUpdatePoint extends SessionStatusUpdate {
+  timestamp: number;
+}
+
 export abstract class WhatsappSession {
   public engine: WAHAEngine;
 
@@ -178,6 +195,7 @@ export abstract class WhatsappSession {
   protected jids: JidFilter;
 
   private _status: WAHASessionStatus;
+  private _statusData: any = null;
   private _presence:
     | WAHAPresenceStatus.ONLINE
     | WAHAPresenceStatus.OFFLINE
@@ -190,7 +208,7 @@ export abstract class WhatsappSession {
 
   private shouldPrintQR: boolean;
   protected events2: DefaultMap<WAHAEvents, SwitchObservable<any>>;
-  private status$: Subject<WAHASessionStatus>;
+  private status$: Subject<SessionStatusUpdate>;
   protected profilePictures: NodeCache = new NodeCache({
     stdTTL: 24 * 60 * 60, // 1 day
   });
@@ -217,7 +235,7 @@ export abstract class WhatsappSession {
     ignore,
   }: SessionParams) {
     this._status = WAHASessionStatus.STOPPED;
-    this.status$ = new Subject<WAHASessionStatus>();
+    this.status$ = new Subject<SessionStatusUpdate>();
 
     this.name = name;
     this.proxyConfig = proxyConfig;
@@ -252,46 +270,55 @@ export abstract class WhatsappSession {
         // Wait for WORKING status to get all the info
         // https://github.com/devlikeapro/waha/issues/409
         .pipe(
-          switchMap((status: WAHASessionStatus) => {
+          switchMap((update: SessionStatusUpdate) => {
             const me = this.getSessionMeInfo();
             const hasMe = !!me?.pushName && !!me?.id;
             // Delay WORKING by 1 second if condition is met
             // Usually we get WORKING with all the info after
-            if (status === WAHASessionStatus.WORKING && !hasMe) {
-              return of(status).pipe(delay(2000));
+            if (update.status === WAHASessionStatus.WORKING && !hasMe) {
+              return of(update).pipe(delay(2000));
             }
-            return of(status);
+            return of(update);
           }),
           // Remove consecutive duplicate WORKING statuses
           distinctUntilChanged(
-            (prev, curr) => prev === curr && curr === WAHASessionStatus.WORKING,
+            (prev, curr) =>
+              prev.status === curr.status &&
+              curr.status === WAHASessionStatus.WORKING,
           ),
           // attach current time (ms)
           timestamp(),
           map(
             ({ value, timestamp }) =>
               ({
-                status: value,
+                status: value.status,
                 timestamp: timestamp,
-              }) as SessionStatusPoint,
+                data: value.data,
+              }) as SessionStatusUpdatePoint,
           ),
           // keep the last 3 entries
-          scan<SessionStatusPoint, SessionStatusPoint[]>(
-            (statuses, status: SessionStatusPoint) => {
-              const next = [...statuses, status];
+          scan<SessionStatusUpdatePoint, SessionStatusUpdatePoint[]>(
+            (points, point: SessionStatusUpdatePoint) => {
+              const next = [...points, point];
               return next.length > 3 ? next.slice(-3) : next;
             },
             [],
           ),
           // shape final payload
-          map(
-            (statuses) =>
-              ({
-                name: this.name,
-                status: statuses.at(-1)?.status, // current
-                statuses: statuses,
-              }) as WASessionStatusBody,
-          ),
+          map((points) => {
+            const current = points.at(-1); // current
+            return {
+              name: this.name,
+              status: current?.status,
+              statuses: points.map(
+                (point): SessionStatusPoint => ({
+                  status: point.status,
+                  timestamp: point.timestamp,
+                }),
+              ),
+              data: current?.data ?? null,
+            } as WASessionStatusBody;
+          }),
         ),
     );
 
@@ -311,18 +338,32 @@ export abstract class WhatsappSession {
     return this.events2.get(event);
   }
 
-  public set status(value: WAHASessionStatus) {
-    if (this.unpairing && value !== WAHASessionStatus.STOPPED) {
+  /**
+   * Set the status along with the extra info that belongs to it.
+   * Plain 'status = value' assignments go through here without data,
+   * so the data is dropped as soon as the session moves on.
+   */
+  protected setStatus(status: WAHASessionStatus, data: any = null) {
+    if (this.unpairing && status !== WAHASessionStatus.STOPPED) {
       // In case of unpairing
       // wait for STOPPED event, ignore the rest
       return;
     }
-    this._status = value;
-    this.status$.next(value);
+    this._status = status;
+    this._statusData = data;
+    this.status$.next({ status: status, data: data });
+  }
+
+  public set status(value: WAHASessionStatus) {
+    this.setStatus(value);
   }
 
   public get status() {
     return this._status;
+  }
+
+  public get statusData() {
+    return this._statusData;
   }
 
   protected set presence(value: WAHAPresenceStatus) {
@@ -450,7 +491,7 @@ export abstract class WhatsappSession {
     throw new NotImplementedByEngineError();
   }
 
-  public getPasskeyChallenge(): any {
+  public getPasskeyChallenge(): PasskeyChallenge {
     throw new NotImplementedByEngineError();
   }
 
@@ -462,7 +503,7 @@ export abstract class WhatsappSession {
     throw new NotImplementedByEngineError();
   }
 
-  public getPasskeyConfirmation(): { code: string; skipHandoffUX: boolean } | null {
+  public getPasskeyConfirmation(): PasskeyConfirmationResponse {
     throw new NotImplementedByEngineError();
   }
 

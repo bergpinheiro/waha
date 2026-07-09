@@ -125,6 +125,18 @@ export class WASessionStatusBody {
   status: WAHASessionStatus;
 
   statuses: SessionStatusPoint[];
+
+  @ApiProperty({
+    required: false,
+    nullable: true,
+    description:
+      'Extra info that belongs to the current status, null for most of them.\n' +
+      'PASSKEY_REQUIRED - the WebAuthn challenge, ' +
+      'pass it to navigator.credentials.get({ publicKey: data }).\n' +
+      'PASSKEY_CONFIRMATION_REQUIRED - { code } - the code to verify against the phone.',
+    example: null,
+  })
+  data?: any;
 }
 
 export class WAHAWebhook<Payload = any> {

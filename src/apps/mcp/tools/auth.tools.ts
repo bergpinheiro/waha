@@ -3,6 +3,10 @@ import { WAHASelf } from '@waha/apps/app_sdk/waha/WAHASelf';
 import { McpController } from '@waha/apps/mcp/decorators/controller';
 import { Tool } from '@waha/apps/mcp/decorators/tool';
 import {
+  AuthPasskeyChallengeInput,
+  AuthPasskeyConfirmationInput,
+  AuthPasskeyConfirmInput,
+  AuthPasskeySubmitInput,
   AuthQRInput,
   AuthRequestCodeInput,
   ScreenshotInput,
@@ -98,5 +102,96 @@ export class AuthTools extends McpController {
         '4. Tap "Link with phone number instead" and enter the code',
     });
     return result;
+  }
+
+  @Tool('auth-passkey-challenge', {
+    title: 'Get passkey challenge',
+    description:
+      'Get the pending passkey (WebAuthn) challenge for a session in PASSKEY_REQUIRED status. ' +
+      'Fails with 422 when nothing is pending. ' +
+      'You cannot sign the challenge yourself - the assertion has to be produced by an authenticator ' +
+      'on the https://web.whatsapp.com origin (the WAHA browser extension, or the DevTools fallback). ' +
+      'Hand the challenge to the user, then submit the result with auth-passkey-submit.',
+    inputSchema: AuthPasskeyChallengeInput,
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  })
+  async passkeyChallenge({
+    session,
+  }: z.infer<typeof AuthPasskeyChallengeInput>) {
+    return this.textRequest({
+      method: 'GET',
+      url: `/api/${session}/auth/passkey/challenge`,
+    });
+  }
+
+  @Tool('auth-passkey-submit', {
+    title: 'Submit passkey assertion',
+    description:
+      'Submit the WebAuthn assertion produced by navigator.credentials.get() to finish passkey pairing. ' +
+      'Get the challenge from auth-passkey-challenge first. ' +
+      'After this the session usually goes straight to WORKING; ' +
+      'if it goes to PASSKEY_CONFIRMATION_REQUIRED instead, follow up with auth-passkey-confirmation.',
+    inputSchema: AuthPasskeySubmitInput,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: false,
+    },
+  })
+  async passkeySubmit({
+    session,
+    ...body
+  }: z.infer<typeof AuthPasskeySubmitInput>) {
+    return this.textRequest({
+      method: 'POST',
+      url: `/api/${session}/auth/passkey`,
+      data: body,
+    });
+  }
+
+  @Tool('auth-passkey-confirmation', {
+    title: 'Get passkey confirmation code',
+    description:
+      'Get the pending passkey confirmation code for a session in PASSKEY_CONFIRMATION_REQUIRED status. ' +
+      'Fails with 422 when nothing is pending. ' +
+      'Show the code to the user, ask them to check it matches the one on their phone, ' +
+      'then call auth-passkey-confirm.',
+    inputSchema: AuthPasskeyConfirmationInput,
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  })
+  async passkeyConfirmation({
+    session,
+  }: z.infer<typeof AuthPasskeyConfirmationInput>) {
+    return this.textRequest({
+      method: 'GET',
+      url: `/api/${session}/auth/passkey/confirmation`,
+    });
+  }
+
+  @Tool('auth-passkey-confirm', {
+    title: 'Confirm passkey pairing',
+    description:
+      'Finish passkey pairing after the user confirmed the code matches the one shown on their phone. ' +
+      'Only call it once the user has verified the code from auth-passkey-confirmation.',
+    inputSchema: AuthPasskeyConfirmInput,
+    annotations: {
+      readOnlyHint: false,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  })
+  async passkeyConfirm({ session }: z.infer<typeof AuthPasskeyConfirmInput>) {
+    return this.textRequest({
+      method: 'POST',
+      url: `/api/${session}/auth/passkey/confirm`,
+    });
   }
 }

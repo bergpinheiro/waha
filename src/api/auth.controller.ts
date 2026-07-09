@@ -7,7 +7,12 @@ import {
   UseInterceptors,
   UseGuards,
 } from '@nestjs/common';
-import { ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger';
+import {
+  ApiOkResponse,
+  ApiOperation,
+  ApiSecurity,
+  ApiTags,
+} from '@nestjs/swagger';
 import { ApiFileAcceptHeader } from '@waha/nestjs/ApiFileAcceptHeader';
 import {
   QRCodeSessionParam,
@@ -20,6 +25,8 @@ import { WhatsappSession } from '../core/abc/session.abc';
 import { BufferResponseInterceptor } from '../nestjs/BufferResponseInterceptor';
 import {
   PasskeyAssertionRequest,
+  PasskeyChallenge,
+  PasskeyConfirmationResponse,
   QRCodeFormat,
   QRCodeQuery,
   QRCodeValue,
@@ -70,12 +77,17 @@ class AuthController {
     return session.requestCode(request.phoneNumber, request.method, request);
   }
 
-  @Get('passkey')
+  @Get('passkey/challenge')
   @SessionApiParam
   @ApiOperation({
-    summary: 'Get the pending passkey (WebAuthn) challenge, if any.',
+    summary: 'Get the pending passkey (WebAuthn) challenge.',
+    description:
+      'Available while the session is in PASSKEY_REQUIRED status. ' +
+      'Pass the challenge to navigator.credentials.get({ publicKey: challenge }) ' +
+      'on the https://web.whatsapp.com origin.',
   })
-  getPasskey(@SessionParam session: WhatsappSession) {
+  @ApiOkResponse({ type: PasskeyChallenge })
+  getPasskeyChallenge(@SessionParam session: WhatsappSession) {
     return session.getPasskeyChallenge();
   }
 
@@ -94,9 +106,12 @@ class AuthController {
   @Get('passkey/confirmation')
   @SessionApiParam
   @ApiOperation({
-    summary:
-      'Get the pending passkey confirmation code, if any (manual confirmation-code case only).',
+    summary: 'Get the pending passkey confirmation code.',
+    description:
+      'Available while the session is in PASSKEY_CONFIRMATION_REQUIRED status. ' +
+      'Most pairings skip this step - WhatsApp confirms them right after the assertion.',
   })
+  @ApiOkResponse({ type: PasskeyConfirmationResponse })
   getPasskeyConfirmation(@SessionParam session: WhatsappSession) {
     return session.getPasskeyConfirmation();
   }
