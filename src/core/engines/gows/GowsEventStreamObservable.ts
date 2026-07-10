@@ -1,14 +1,29 @@
 import * as grpc from '@grpc/grpc-js';
+import { rand } from '@waha/core/auth/config';
 import { messages } from '@waha/core/engines/gows/grpc/gows';
 import { EnginePayload } from '@waha/structures/webhooks.dto';
 import { sleep } from '@waha/utils/promiseTimeout';
 import { Logger } from 'pino';
 import { Observable } from 'rxjs';
-import { rand } from '@waha/core/auth/config';
+
+/**
+ * Raised when the gRPC stream ends without an error.
+ * The engine event stream is expected to live as long as the session,
+ * so a clean end still means we lost the events and have to reconnect.
+ */
+export class GowsStreamEndedError extends Error {
+  constructor() {
+    super('gRPC event stream ended');
+    this.name = 'GowsStreamEndedError';
+  }
+}
 
 /**
  * Observable that listens to a gRPC stream and emits EnginePayload objects.
  * Pass a factory function that returns a client and a stream.
+ *
+ * The observable always terminates with an error, never with a completion,
+ * so that an upstream retry() reconnects the stream.
  */
 export class GowsEventStreamObservable extends Observable<EnginePayload> {
   _client: grpc.Client;
@@ -26,63 +41,79 @@ export class GowsEventStreamObservable extends Observable<EnginePayload> {
       logger.setBindings({ id: rand() });
       const { client, stream } = factory();
       this._client = client;
+      const closeTimeout = this.CLIENT_CLOSE_TIMEOUT;
 
       let closed = false;
-      const cleanup = async (reason: string) => {
+      let terminated = false;
+      let tearingDown = false;
+
+      async function cleanup(reason: string) {
         if (closed) {
           return;
         }
         closed = true;
 
-        logger.debug({ reason }, 'Cancelling gRPC stream...');
+        logger.debug({ reason: reason }, 'Cancelling gRPC stream...');
         try {
           stream.cancel();
         } catch (err) {
-          logger.warn({ err }, 'Failed to cancel gRPC stream');
+          logger.warn({ err: err }, 'Failed to cancel gRPC stream');
         }
 
-        logger.debug({ reason }, 'Closing gRPC client...');
+        logger.debug({ reason: reason }, 'Closing gRPC client...');
         try {
           client.close();
         } catch (err) {
-          logger.warn({ err }, 'Failed to close gRPC client');
+          logger.warn({ err: err }, 'Failed to close gRPC client');
         }
 
-        await sleep(this.CLIENT_CLOSE_TIMEOUT);
-      };
+        await sleep(closeTimeout);
+      }
+
+      // Must run synchronously from the stream handlers.
+      // grpc-js calls stream.push(null) - which schedules 'end' on the next tick -
+      // and only then emits 'error' in the same tick. Erroring the subscriber
+      // right away wins that race, otherwise 'end' completes the observable
+      // and the upstream retry() never reconnects.
+      function terminate(err: Error) {
+        if (terminated) {
+          return;
+        }
+        terminated = true;
+        // Erroring the subscriber runs the teardown below, which cleans up.
+        subscriber.error(err);
+      }
 
       stream.on('data', (raw) => {
         setImmediate(() => {
           const obj = raw.toObject();
           obj.data = JSON.parse(obj.data);
-          subscriber?.next(obj);
+          subscriber.next(obj);
         });
       });
 
-      stream.on('end', (...args) => {
-        logger.debug('Stream ended', args);
-        subscriber?.complete();
-        subscriber = null;
-        void cleanup('end');
-      });
-
-      stream.on('error', async (err: any) => {
-        const CLIENT_CANCELLED_CODE = grpc.status.CANCELLED;
-        if (err.code === CLIENT_CANCELLED_CODE) {
-          logger.debug('Stream cancelled by client');
-          await cleanup('cancelled');
+      stream.on('end', () => {
+        if (tearingDown || terminated) {
+          logger.debug('Stream ended');
           return;
         }
-        logger.error(err, 'Stream error');
-        await cleanup('error');
-        // Give some time to node event loop to process the error
-        await sleep(100);
-        subscriber?.error(err);
-        subscriber = null;
+        logger.error('Stream ended unexpectedly, reconnecting...');
+        terminate(new GowsStreamEndedError());
       });
 
-      return async () => {
-        await cleanup('teardown');
+      stream.on('error', (err: any) => {
+        if (tearingDown || terminated) {
+          // We cancelled the stream ourselves, no need to reconnect
+          logger.debug({ err: err }, 'Stream cancelled by client');
+          return;
+        }
+        logger.error(err, 'Stream error, reconnecting...');
+        terminate(err);
+      });
+
+      return () => {
+        tearingDown = true;
+        void cleanup('teardown');
       };
     });
   }
