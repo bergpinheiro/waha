@@ -4625,11 +4625,11 @@ __metadata:
   linkType: hard
 
 "@wppconnect-team/wppconnect@github:wppconnect-team/wppconnect#master":
-  version: 2.2.1
-  resolution: "@wppconnect-team/wppconnect@https://github.com/wppconnect-team/wppconnect.git#commit=58a4983de9b86efa7ef6527d5c752a746851c9d0"
+  version: 2.2.3
+  resolution: "@wppconnect-team/wppconnect@https://github.com/wppconnect-team/wppconnect.git#commit=b467df8a5e0b00bbd794b5afc40c7fb1836e70a0"
   dependencies:
     "@img/sharp-win32-x64": "npm:^0.35.3"
-    "@wppconnect/wa-js": "npm:^4.3.1"
+    "@wppconnect/wa-js": "npm:^4.4.1"
     "@wppconnect/wa-version": "npm:^1.5.3941"
     atob: "npm:^2.1.2"
     axios: "npm:^1.18.1"
@@ -4664,21 +4664,21 @@ __metadata:
       optional: true
     fsevents:
       optional: true
-  checksum: 10/d4f876e2dbb0400481f8350471efc53e9fc68b9eb3bcbdd17fb92a869a827f135db90f49c5b709296ca9b49b64f14072087f3bfa2f457ca49433e0fba17fdb46
+  checksum: 10/73baacfc22b9cbc40cbec4d010591b6614e28e7e5d95be0d8cbd378d8160f886cd2683c12a0ad8bbe8e073d8bbbc5d0cb785e316320e60e6e0178c36af779a99
   languageName: node
   linkType: hard
 
 "@wppconnect/wa-js@github:wppconnect-team/wa-js#main":
-  version: 4.3.1
-  resolution: "@wppconnect/wa-js@https://github.com/wppconnect-team/wa-js.git#commit=a4c57173198e9b51c33c33490e07e78d27d20ffe"
-  checksum: 10/5515e347fadeb9221b02ac92bd00e42f5dd31ad4236a0ca812b34060d993c5384e30e1dabf8bac85016f49075a5374ea87b7e5eb345cfdeabaabd6eb7a0b9ba2
+  version: 4.4.1
+  resolution: "@wppconnect/wa-js@https://github.com/wppconnect-team/wa-js.git#commit=1f7cc7e12e2cf9246a65bb8de4348055016f374e"
+  checksum: 10/8c6a370cfa6d4ec516664b71fd1b0e4300f3dc28433925cace8df7954c6b1781913c9993d573cb39cb78d363b3edf2f4d23255655d4cdd053296ffe4534c1170
   languageName: node
   linkType: hard
 
-"@wppconnect/wa-js@npm:^4.3.1":
-  version: 4.3.1
-  resolution: "@wppconnect/wa-js@npm:4.3.1"
-  checksum: 10/5515e347fadeb9221b02ac92bd00e42f5dd31ad4236a0ca812b34060d993c5384e30e1dabf8bac85016f49075a5374ea87b7e5eb345cfdeabaabd6eb7a0b9ba2
+"@wppconnect/wa-js@npm:^4.4.1":
+  version: 4.4.1
+  resolution: "@wppconnect/wa-js@npm:4.4.1"
+  checksum: 10/8c6a370cfa6d4ec516664b71fd1b0e4300f3dc28433925cace8df7954c6b1781913c9993d573cb39cb78d363b3edf2f4d23255655d4cdd053296ffe4534c1170
   languageName: node
   linkType: hard
 
