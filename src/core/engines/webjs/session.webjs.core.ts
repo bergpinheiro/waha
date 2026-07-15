@@ -533,6 +533,7 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
     const wid = clientInfo.wid;
     return {
       id: GetSerialized(wid),
+      lid: GetSerialized(clientInfo.lid),
       pushName: clientInfo?.pushname,
     };
   }
