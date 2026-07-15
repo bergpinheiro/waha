@@ -19,6 +19,7 @@ import {
   GroupParticipant as WEBJSGroupParticipant,
 } from 'whatsapp-web.js';
 import { isPnUser } from '@waha/core/utils/jids';
+import { GetSerialized } from '@waha/core/utils/serialized';
 
 function ToGroupInfo(
   group: GroupChat,
@@ -29,7 +30,7 @@ function ToGroupInfo(
   const groupMetadata = group.groupMetadata;
   const info: GroupInfo = {
     // @ts-ignore
-    id: group.id._serialized,
+    id: GetSerialized(group.id),
     subject: group.name,
     description: group.description,
     invite: invite,
@@ -72,11 +73,10 @@ export function getParticipants(
       role = GroupParticipantRole.ADMIN;
     }
 
+    const participantId = GetSerialized(participant.id);
     return {
-      id: participant.id._serialized,
-      pn: isPnUser(participant.id._serialized)
-        ? participant.id._serialized
-        : null,
+      id: participantId,
+      pn: isPnUser(participantId) ? participantId : null,
       role: role,
     };
   });

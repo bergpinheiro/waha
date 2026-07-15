@@ -1,4 +1,5 @@
 import { WebJSPresence } from '@waha/core/engines/webjs/types';
+import { GetSerialized } from '@waha/core/utils/serialized';
 import { GetChatMessagesFilter } from '@waha/structures/chats.dto';
 import { Label } from '@waha/structures/labels.dto';
 import { LidToPhoneNumber } from '@waha/structures/lids.dto';
@@ -75,7 +76,7 @@ function extractReactionsByMessageKey(
 ): Map<string, ChannelMessageReaction[]> {
   const reactions = new Map();
   for (const reaction of newsletterReactions) {
-    const key = reaction.parentMsgKey._serialized;
+    const key = GetSerialized(reaction.parentMsgKey);
     const emojiCountMap = reaction.emojiCountMap;
     const reactionList: ChannelMessageReaction[] = [];
     for (const emoji in emojiCountMap) {
@@ -266,7 +267,8 @@ export class WebjsClientCore extends Client {
         // Filter chats by IDs if filter is provided
         if (filter && filter.ids && filter.ids.length > 0) {
           chats = chats.filter((chat) =>
-            filter.ids.includes(chat.id._serialized),
+            // @ts-ignore
+            filter.ids.includes(window.WWebJS.GetSerialized(chat.id)),
           );
         }
 
@@ -382,7 +384,10 @@ export class WebjsClientCore extends Client {
           // Construct the initial anchor the same way wa-js does:
           // serialize to string then reconstruct via MsgKey.fromString so the
           // object has the exact shape msgFindByDirection expects.
-          const lastReceivedSerialized = chat.lastReceivedKey?._serialized;
+          // @ts-ignore
+          const lastReceivedSerialized = window.WWebJS.GetSerialized(
+            chat.lastReceivedKey,
+          );
           if (!lastReceivedSerialized) return [];
           let currentAnchorKey = window
             .require('WAWebMsgKey')
@@ -406,7 +411,8 @@ export class WebjsClientCore extends Client {
           // @ts-ignore
           const toModel = (m) => {
             if (m && typeof m.serialize === 'function') return m;
-            const serializedId = m?.id?._serialized;
+            // @ts-ignore
+            const serializedId = window.WWebJS.GetSerialized(m?.id);
             const Msg = window.require('WAWebCollections').Msg;
             if (serializedId) {
               const stored = Msg.get(serializedId);
@@ -437,7 +443,8 @@ export class WebjsClientCore extends Client {
             // appear in multiple batches when anchors overlap
             const seenIds = new Set();
             msgs = msgs.filter((m) => {
-              const sid = m?.id?._serialized;
+              // @ts-ignore
+              const sid = window.WWebJS.GetSerialized(m?.id);
               if (!sid || seenIds.has(sid)) return false;
               seenIds.add(sid);
               return true;
@@ -463,7 +470,10 @@ export class WebjsClientCore extends Client {
             // the oldest message in this batch — use it as the next anchor to
             // walk further back in history without overlap
             const oldestInBatch = batchModels[batchModels.length - 1];
-            const oldestSerialized = oldestInBatch?.id?._serialized;
+            // @ts-ignore
+            const oldestSerialized = window.WWebJS.GetSerialized(
+              oldestInBatch?.id,
+            );
             if (!oldestSerialized) break;
             currentAnchorKey = window
               .require('WAWebMsgKey')
@@ -532,9 +542,9 @@ export class WebjsClientCore extends Client {
         const result = values.map((map) => {
           return {
             // @ts-ignore
-            lid: map.lid._serialized,
+            lid: window.WWebJS.GetSerialized(map.lid),
             // @ts-ignore
-            pn: map.phoneNumber._serialized,
+            pn: window.WWebJS.GetSerialized(map.phoneNumber),
           };
         });
         // @ts-ignore
@@ -565,7 +575,8 @@ export class WebjsClientCore extends Client {
 
       const wid = WAWebWidFactory.createWid(lid);
       const result = WAWebApiContact.getPhoneNumber(wid);
-      return result ? result._serialized : null;
+      // @ts-ignore
+      return window.WWebJS.GetSerialized(result);
     }, lid);
     return pn;
   }
@@ -577,7 +588,8 @@ export class WebjsClientCore extends Client {
 
       const wid = WAWebWidFactory.createWid(pn);
       const result = WAWebApiContact.getCurrentLid(wid);
-      return result ? result._serialized : null;
+      // @ts-ignore
+      return window.WWebJS.GetSerialized(result);
     }, phoneNumber)) as any;
     return lid;
   }
@@ -617,7 +629,8 @@ export class WebjsClientCore extends Client {
       }
       return chatstates.map((chatstate) => {
         return {
-          participant: chatstate.id._serialized,
+          // @ts-ignore
+          participant: window.WWebJS.GetSerialized(chatstate.id),
           lastSeen: chatstate.t,
           state: chatstate.type,
         };
@@ -681,7 +694,7 @@ export class WebjsClientCore extends Client {
     const messages: WebjsChannelMessage[] = messageInstances.map((msg) => {
       return {
         message: msg,
-        reactions: reactions.get(msg.id._serialized) || [],
+        reactions: reactions.get(GetSerialized(msg.id)) || [],
         viewCount: msg.rawData.viewCount,
       };
     });
