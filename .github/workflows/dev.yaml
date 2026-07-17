@@ -35,7 +35,7 @@ jobs:
   #        run: yarn test:unit
 
   docker-build:
-    if: github.repository == 'devlikeapro/waha-plus'
+    if: github.repository == 'devlikeapro/waha'
     #    needs: unit-tests
     runs-on: ${{ matrix.runner }}
     name:
