@@ -1205,12 +1205,20 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
         urlInfo.jpegThumbnail = thumbnail.buffer;
       } else {
         // upload HQ thumbnail
+        // newsletters need the thumbnail uploaded unencrypted (plaintext path),
+        // otherwise clients can not render it (white/blurred preview image)
+        const uploadToServer = this.sock.waUploadToServer;
+        const uploadThumbnail = async (encFilePath, opts) => {
+          opts.newsletter = isJidNewsletter(chatId);
+          return await uploadToServer(encFilePath, opts);
+        };
         const { imageMessage } = await esm.b.prepareWAMessageMedia(
           { image: content },
           {
-            upload: this.sock.waUploadToServer,
+            upload: uploadThumbnail,
             mediaTypeOverride: 'thumbnail-link',
             options: { signal: AbortSignal.timeout(10_000) },
+            jid: chatId,
           },
         );
         urlInfo.jpegThumbnail = imageMessage?.jpegThumbnail
