@@ -154,6 +154,7 @@ import {
   CreateGroupRequest,
   GroupParticipant,
   ParticipantsRequest,
+  SettingsMemberAddMode,
   SettingsSecurityChangeInfo,
 } from '@waha/structures/groups.dto';
 import {
@@ -1973,6 +1974,17 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
   public async setMessagesAdminsOnly(id, value) {
     const setting = value ? 'announcement' : 'not_announcement';
     return await this.sock.groupSettingUpdate(id, setting);
+  }
+
+  public async getMemberAddMode(id): Promise<SettingsMemberAddMode> {
+    const group = await this.getGroup(id);
+    return { membersCanAddNewMember: group.memberAddMode };
+  }
+
+  @Activity()
+  public async setMemberAddMode(id, value) {
+    const mode = value ? 'all_member_add' : 'admin_add';
+    return await this.sock.groupMemberAddMode(id, mode);
   }
 
   @Activity()
