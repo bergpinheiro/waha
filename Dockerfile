@@ -16,10 +16,10 @@ RUN apt-get update && \
 WORKDIR /git
 COPY package.json .
 COPY yarn.lock .
+COPY .yarnrc.yml .
 ENV YARN_CHECKSUM_BEHAVIOR=update
 
 RUN npm install -g corepack && corepack enable
-RUN yarn set version 4.9.2
 RUN yarn install
 
 # App
