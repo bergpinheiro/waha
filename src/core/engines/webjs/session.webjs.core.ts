@@ -108,6 +108,7 @@ import {
   GroupParticipant,
   GroupSortField,
   ParticipantsRequest,
+  SettingsMemberAddMode,
   SettingsSecurityChangeInfo,
 } from '@waha/structures/groups.dto';
 import { Label, LabelDTO, LabelID } from '@waha/structures/labels.dto';
@@ -1533,6 +1534,22 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
   public async setMessagesAdminsOnly(id, value) {
     const groupChat = (await this.whatsapp.getChatById(id)) as GroupChat;
     return groupChat.setMessagesAdminsOnly(value);
+  }
+
+  public async getMemberAddMode(id): Promise<SettingsMemberAddMode> {
+    const groupChat = (await this.whatsapp.getChatById(id)) as GroupChat;
+    return {
+      membersCanAddNewMember:
+        // @ts-ignore
+        groupChat.groupMetadata.memberAddMode === 'all_member_add',
+    };
+  }
+
+  @Activity()
+  public async setMemberAddMode(id, value) {
+    const groupChat = (await this.whatsapp.getChatById(id)) as GroupChat;
+    // The library setter is inverted - it takes "adminsOnly"
+    return groupChat.setAddMembersAdminsOnly(!value);
   }
 
   public async getGroups(pagination: PaginationParams) {

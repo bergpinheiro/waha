@@ -119,6 +119,7 @@ import {
   GroupSortField,
   Participant,
   ParticipantsRequest,
+  SettingsMemberAddMode,
   SettingsSecurityChangeInfo,
 } from '@waha/structures/groups.dto';
 import { ReplyToMessage } from '@waha/structures/message.dto';
@@ -1647,6 +1648,24 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
       value: value,
     });
     await promisify(this.client.SetGroupAnnounce)(req);
+    return;
+  }
+
+  public async getMemberAddMode(id): Promise<SettingsMemberAddMode> {
+    const group = await this.getGroup(id);
+    return {
+      membersCanAddNewMember: group.MemberAddMode === 'all_member_add',
+    };
+  }
+
+  @Activity()
+  public async setMemberAddMode(id, value) {
+    const req = new messages.JidBoolRequest({
+      session: this.session,
+      jid: id,
+      value: value,
+    });
+    await promisify(this.client.SetGroupMemberAddMode)(req);
     return;
   }
 
