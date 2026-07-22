@@ -125,7 +125,11 @@ import {
   WAMessageReaction,
 } from '@waha/structures/responses.dto';
 import { BrowserTraceQuery } from '@waha/structures/server.debug.dto';
-import { MeInfo } from '@waha/structures/sessions.dto';
+import {
+  MeInfo,
+  ReachoutTimelockEnforcementType,
+} from '@waha/structures/sessions.dto';
+import { EnsureSeconds } from '@waha/utils/timehelper';
 import {
   BROADCAST_ID,
   DeleteStatusRequest,
@@ -535,6 +539,7 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
       id: GetSerialized(wid),
       lid: GetSerialized(clientInfo.lid),
       pushName: clientInfo?.pushname,
+      reachoutTimelock: this.reachoutTimelock.value,
     };
   }
 
@@ -551,6 +556,28 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
   }
 
   protected listenConnectionEvents() {
+    this.whatsapp.on(Events.REACHOUT_TIMELOCK_UPDATE, (record: any) => {
+      if (!record) {
+        // The app removes the stored record when the enforcement is lifted (or there is none)
+        const current = this.reachoutTimelock.value;
+        if (current?.isActive) {
+          this.reachoutTimelock.update({ ...current, isActive: false });
+        }
+        return;
+      }
+      const enforcementType =
+        record.enforcement_type ?? ReachoutTimelockEnforcementType.DEFAULT;
+      this.reachoutTimelock.update({
+        enforcementType: enforcementType as ReachoutTimelockEnforcementType,
+        // The record only exists while the enforcement is active
+        isActive: true,
+        // The app stores 'time_enforcement_ends' as unix milliseconds
+        timeEnforcementEnds: record.time_enforcement_ends
+          ? EnsureSeconds(record.time_enforcement_ends)
+          : null,
+      });
+    });
+
     this.whatsapp.on(Events.QR_RECEIVED, async (qr) => {
       this.logger.debug('QR received');
       // Convert to image and save

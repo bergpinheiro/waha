@@ -171,7 +171,11 @@ import {
   WAHAPresenceData,
 } from '@waha/structures/presence.dto';
 import { WAMessage, WAMessageReaction } from '@waha/structures/responses.dto';
-import { MeInfo } from '@waha/structures/sessions.dto';
+import {
+  MeInfo,
+  ReachoutTimelockEnforcementType,
+} from '@waha/structures/sessions.dto';
+import { EnsureSeconds } from '@waha/utils/timehelper';
 import {
   BROADCAST_ID,
   DeleteStatusRequest,
@@ -547,11 +551,32 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
     this.logger.debug(`Start listening ${BaileysEvents.CONNECTION_UPDATE}...`);
     this.sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr, isNewLogin } = update;
+      if (update.reachoutTimeLock) {
+        const timelock = update.reachoutTimeLock;
+        const enforcementType =
+          timelock.enforcementType ?? ReachoutTimelockEnforcementType.DEFAULT;
+        let timeEnforcementEnds: number | null = null;
+        if (timelock.timeEnforcementEnds) {
+          timeEnforcementEnds = EnsureSeconds(
+            timelock.timeEnforcementEnds.getTime(),
+          );
+        }
+        this.reachoutTimelock.update({
+          enforcementType: enforcementType as ReachoutTimelockEnforcementType,
+          isActive: timelock.isActive === true,
+          timeEnforcementEnds: timeEnforcementEnds,
+        });
+      }
       if (isNewLogin) {
         this.restartClient();
       } else if (connection === 'open') {
         this.qr.save('');
         this.status = WAHASessionStatus.WORKING;
+        // Ask WhatsApp for the current reachout timelock state, so a restarted session learns about
+        // an ongoing timelock without waiting for a push. The result arrives via 'connection.update'
+        this.sock?.fetchAccountReachoutTimelock?.().catch((error) => {
+          this.logger.warn(`Failed to fetch reachout timelock: ${error}`);
+        });
         // Do we need to resubscribe?
         // Ideally not, we need to explicitly call interesting
         // jids every 1 minute
@@ -854,6 +879,7 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
       id: toCusFormat(meId),
       pushName: me.name,
       lid: jidNormalizedUser(me.lid),
+      reachoutTimelock: this.reachoutTimelock.value,
     };
   }
 

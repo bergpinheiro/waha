@@ -1,3 +1,4 @@
+import { ReachoutTimelockTracker } from '@waha/core/abc/ReachoutTimelockTracker';
 import { getBrowserExecutablePath as getBrowserExecutablePathAutodetect } from '@waha/core/abc/session.browser';
 import { IMediaConverter } from '@waha/core/media/IConverter';
 import { Ffmpeg } from '@waha/core/utils/ffmpeg';
@@ -196,6 +197,7 @@ export abstract class WhatsappSession {
 
   private _status: WAHASessionStatus;
   private _statusData: any = null;
+  protected reachoutTimelock: ReachoutTimelockTracker;
   private _presence:
     | WAHAPresenceStatus.ONLINE
     | WAHAPresenceStatus.OFFLINE
@@ -242,6 +244,15 @@ export abstract class WhatsappSession {
     this.loggerBuilder = loggerBuilder;
     this.logger = loggerBuilder.child({ name: 'WhatsappSession' });
     this.mediaConverter = new Ffmpeg(this.name, this.logger);
+    this.reachoutTimelock = new ReachoutTimelockTracker(this.logger);
+    this.reachoutTimelock.changes$.subscribe((timelock) => {
+      if (this.status === WAHASessionStatus.WORKING) {
+        // Re-issue WORKING so 'session.status' consumers get the update
+        this.setStatus(WAHASessionStatus.WORKING, {
+          reachoutTimelock: timelock,
+        });
+      }
+    });
     this.events2 = new DefaultMap<WAHAEvents, SwitchObservable<any>>(
       (key) =>
         new SwitchObservable((obs$) => {
@@ -280,11 +291,12 @@ export abstract class WhatsappSession {
             }
             return of(update);
           }),
-          // Remove consecutive duplicate WORKING statuses
+          // Remove consecutive duplicate WORKING statuses, but let through WORKING re-issued with new data
           distinctUntilChanged(
             (prev, curr) =>
               prev.status === curr.status &&
-              curr.status === WAHASessionStatus.WORKING,
+              curr.status === WAHASessionStatus.WORKING &&
+              lodash.isEqual(prev.data, curr.data),
           ),
           // attach current time (ms)
           timestamp(),
@@ -348,6 +360,20 @@ export abstract class WhatsappSession {
       // In case of unpairing
       // wait for STOPPED event, ignore the rest
       return;
+    }
+    if (
+      status === WAHASessionStatus.WORKING &&
+      data == null &&
+      this.reachoutTimelock.value?.isActive
+    ) {
+      // Plain 'status = WORKING' assignments (reconnects) must keep carrying the active timelock info
+      data = { reachoutTimelock: this.reachoutTimelock.value };
+    }
+    if (
+      status === WAHASessionStatus.STOPPED ||
+      status === WAHASessionStatus.FAILED
+    ) {
+      this.reachoutTimelock?.stop();
     }
     this._status = status;
     this._statusData = data;
