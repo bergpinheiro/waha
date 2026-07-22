@@ -73,7 +73,12 @@ import { AckToStatus, StatusToAck } from '@waha/core/utils/acks';
 import { pairs } from '@waha/utils/pairs';
 import { ExtractMessageKeysForRead } from '@waha/core/utils/convertors';
 import { parseMessageIdSerialized } from '@waha/core/utils/ids';
-import { isJidNewsletter, toCusFormat, toJID } from '@waha/core/utils/jids';
+import {
+  isJidNewsletter,
+  jidsFromKey,
+  toCusFormat,
+  toJID,
+} from '@waha/core/utils/jids';
 import { DistinctAck, DistinctMessages } from '@waha/core/utils/reactive';
 import {
   flipObject,
@@ -2890,9 +2895,12 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
     if (!origMsgId) {
       return '';
     }
-    const jidsToTry = [targetKey.remoteJid, editMessage.key?.remoteJid].filter(
-      Boolean,
-    );
+    const editKey = editMessage.key as WAMessageKey | undefined;
+    const jidsToTry = [
+      targetKey.remoteJid,
+      editKey?.remoteJid,
+      editKey?.remoteJidAlt,
+    ].filter(Boolean);
     let stored: proto.IWebMessageInfo | undefined;
     for (const jid of jidsToTry) {
       stored = await this.store?.loadMessage(jid, origMsgId);
@@ -2923,40 +2931,75 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
     if (!encPayload || !encIv) {
       return '';
     }
-    const editInfo = {
-      Chat: editMessage.key?.remoteJid,
-      Sender:
-        editMessage.key?.participant ||
-        (editMessage.key?.fromMe ? undefined : editMessage.key?.remoteJid),
-    };
-    const modificationSenderJid = jidToNonAD(editInfo.Sender || '');
-    const primaryOrig = getOrigSenderJidForMsgSecret(editInfo, {
-      fromMe: targetKey.fromMe,
-      remoteJID: targetKey.remoteJid,
-      participant: targetKey.participant,
-    });
-    const candidates: string[] = [primaryOrig];
+
+    // The editor ("modification sender").
+    let modificationSenderJids: Array<string | null | undefined>;
+    if (editKey?.fromMe) {
+      // Try both user lid and c.us
+      modificationSenderJids = [this.sock?.user?.lid, this.sock?.user?.id];
+    } else {
+      const editJids = editKey ? jidsFromKey(editKey) : null;
+      modificationSenderJids = [
+        editKey?.participant || editKey?.remoteJid,
+        editJids?.lid,
+        editJids?.pn,
+      ];
+    }
+    modificationSenderJids = lodash
+      .chain(modificationSenderJids)
+      .filter(Boolean)
+      .map(jidToNonAD)
+      .uniq()
+      .value();
+    if (modificationSenderJids.length === 0) {
+      modificationSenderJids.push('');
+    }
+
     const remoteNonAD = targetKey.remoteJid
       ? jidToNonAD(targetKey.remoteJid)
       : '';
-    if (remoteNonAD && !candidates.includes(remoteNonAD)) {
-      candidates.push(remoteNonAD);
-    }
     const participantNonAD = targetKey.participant
       ? jidToNonAD(targetKey.participant)
       : '';
-    if (participantNonAD && !candidates.includes(participantNonAD)) {
-      candidates.push(participantNonAD);
+
+    // Map dedupes by key and keeps the first-insertion order
+    const attempts = new Map<
+      string,
+      { origSenderJid: string; modificationSenderJid: string }
+    >();
+    for (const modificationSenderJid of modificationSenderJids) {
+      const primaryOrigSenderJid = getOrigSenderJidForMsgSecret(
+        { Chat: editKey?.remoteJid, Sender: modificationSenderJid },
+        {
+          fromMe: targetKey.fromMe,
+          remoteJID: targetKey.remoteJid,
+          participant: targetKey.participant,
+        },
+      );
+      const origSenderJids = [
+        primaryOrigSenderJid,
+        remoteNonAD,
+        participantNonAD,
+      ].filter(Boolean);
+      for (const origSenderJid of origSenderJids) {
+        // Avoid duplicates in attemps
+        const attemptKey = `${origSenderJid}|${modificationSenderJid}`;
+        attempts.set(attemptKey, {
+          origSenderJid: origSenderJid,
+          modificationSenderJid: modificationSenderJid,
+        });
+      }
     }
+
     let lastErr: unknown;
-    for (const origSenderJid of candidates) {
+    for (const attempt of attempts.values()) {
       try {
         const decoded = decryptSecretEncryptedMessageEditProto({
           encPayload: encPayload,
           encIv: encIv,
           origMsgId: origMsgId,
-          origSenderJid: origSenderJid,
-          modificationSenderJid: modificationSenderJid,
+          origSenderJid: attempt.origSenderJid,
+          modificationSenderJid: attempt.modificationSenderJid,
           origMsgSecret: origSecret,
         });
         const text = extractBody(decoded) || '';
@@ -2968,7 +3011,11 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
       }
     }
     this.logger.debug(
-      { err: lastErr, origMsgId: origMsgId, candidates: candidates },
+      {
+        err: lastErr,
+        origMsgId: origMsgId,
+        attempts: Array.from(attempts.keys()),
+      },
       'NOWEB message edit decrypt: AES-GCM or protobuf decode failed',
     );
     return '';
