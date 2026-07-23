@@ -556,7 +556,7 @@ export class WhatsappSessionWPPCore extends WhatsappSession {
       options.quotedMsg = quotedMessageId;
     }
     const sent = await this.wpp!.sendLocation(
-      this.ensureSuffix(request.chatId),
+      await this.resolveOutboundChatId(request.chatId),
       options,
     );
     return this.toWAMessage(sent);
@@ -567,7 +567,7 @@ export class WhatsappSessionWPPCore extends WhatsappSession {
     request: MessageForwardRequest,
   ): Promise<WAMessage> {
     const sentMessages = await this.wpp!.forwardMessagesV2(
-      this.ensureSuffix(request.chatId),
+      await this.resolveOutboundChatId(request.chatId),
       request.messageId,
     );
     const sent = Array.isArray(sentMessages) && sentMessages.length > 0;
@@ -588,7 +588,7 @@ export class WhatsappSessionWPPCore extends WhatsappSession {
       options.quotedMsg = quotedMessageId;
     }
     const sent = await this.wpp!.sendPollMessage(
-      this.ensureSuffix(request.chatId),
+      await this.resolveOutboundChatId(request.chatId),
       request.poll.name,
       request.poll.options,
       options,
@@ -604,7 +604,7 @@ export class WhatsappSessionWPPCore extends WhatsappSession {
   public async sendContactVCard(
     request: MessageContactVcardRequest,
   ): Promise<WAMessage> {
-    const chatId = this.ensureSuffix(request.chatId);
+    const chatId = await this.resolveOutboundChatId(request.chatId);
     const contacts: Array<{ id: string; name: string }> = [];
 
     // Raw vcard
@@ -653,17 +653,20 @@ export class WhatsappSessionWPPCore extends WhatsappSession {
     const content = await this.fileToBuffer(request.file);
     const mimetype = request.file.mimetype || WAMimeType.IMAGE;
     const media = WPPMedia(content, mimetype);
+    const mentionedList = await this.resolveOutboundMentionsCus(
+      request.mentions,
+    );
     const options: ImageMessageOptions = {
       type: 'image',
       caption: request.caption,
       filename: request.file.filename,
       mimetype: mimetype,
       quotedMsg: quotedMessageId,
-      mentionedList: request.mentions?.map((id) => this.ensureSuffix(id)),
+      mentionedList: mentionedList,
       waitForAck: false,
     };
     return await this.sendMedia(
-      this.ensureSuffix(request.chatId),
+      await this.resolveOutboundChatId(request.chatId),
       media,
       options,
     );
@@ -675,17 +678,20 @@ export class WhatsappSessionWPPCore extends WhatsappSession {
     const content = await this.fileToBuffer(request.file);
     const mimetype = request.file.mimetype || (await detectMimetype(content));
     const media = WPPMedia(content, mimetype);
+    const mentionedList = await this.resolveOutboundMentionsCus(
+      request.mentions,
+    );
     const options: DocumentMessageOptions = {
       type: 'document',
       caption: request.caption,
       filename: request.file.filename,
       mimetype: mimetype,
       quotedMsg: quotedMessageId,
-      mentionedList: request.mentions?.map((id) => this.ensureSuffix(id)),
+      mentionedList: mentionedList,
       waitForAck: false,
     };
     return await this.sendMedia(
-      this.ensureSuffix(request.chatId),
+      await this.resolveOutboundChatId(request.chatId),
       media,
       options,
     );
@@ -709,7 +715,7 @@ export class WhatsappSessionWPPCore extends WhatsappSession {
       waitForAck: false,
     };
     return await this.sendMedia(
-      this.ensureSuffix(request.chatId),
+      await this.resolveOutboundChatId(request.chatId),
       media,
       options,
     );
@@ -725,6 +731,9 @@ export class WhatsappSessionWPPCore extends WhatsappSession {
       mimetype = WAMimeType.VIDEO;
     }
     const media = WPPMedia(content, mimetype);
+    const mentionedList = await this.resolveOutboundMentionsCus(
+      request.mentions,
+    );
     const options: VideoMessageOptions = {
       type: 'video',
       isPtv: request.asNote,
@@ -732,11 +741,11 @@ export class WhatsappSessionWPPCore extends WhatsappSession {
       filename: request.file.filename,
       mimetype: mimetype,
       quotedMsg: quotedMessageId,
-      mentionedList: request.mentions?.map((id) => this.ensureSuffix(id)),
+      mentionedList: mentionedList,
       waitForAck: false,
     };
     return await this.sendMedia(
-      this.ensureSuffix(request.chatId),
+      await this.resolveOutboundChatId(request.chatId),
       media,
       options,
     );
@@ -864,13 +873,16 @@ export class WhatsappSessionWPPCore extends WhatsappSession {
   @Activity()
   public async reply(request: MessageReplyRequest) {
     const quotedMessageId = this.getReplyToMessageId(request as any);
+    const mentionedList = await this.resolveOutboundMentionsCus(
+      request.mentions,
+    );
     const options: WppSendTextOptions = {
-      mentionedList: request.mentions?.map((id) => this.ensureSuffix(id)),
+      mentionedList: mentionedList,
       quotedMsg: quotedMessageId,
       waitForAck: false,
     };
     const sent = await this.wpp!.sendText(
-      this.ensureSuffix(request.chatId),
+      await this.resolveOutboundChatId(request.chatId),
       request.text,
       options,
     );
@@ -879,12 +891,14 @@ export class WhatsappSessionWPPCore extends WhatsappSession {
 
   @Activity()
   public async startTyping(request: ChatRequest): Promise<void> {
-    await this.wpp!.startTyping(this.ensureSuffix(request.chatId));
+    await this.wpp!.startTyping(
+      await this.resolveOutboundChatId(request.chatId, { validate: false }),
+    );
   }
 
   @Activity()
   public async stopTyping(request: ChatRequest) {
-    const chatId = this.ensureSuffix(request.chatId);
+    const chatId = await this.resolveOutboundChatId(request.chatId, { validate: false });
     await Promise.all([
       this.wpp!.stopTyping(chatId),
       this.wpp!.stopRecording(chatId),
@@ -905,13 +919,16 @@ export class WhatsappSessionWPPCore extends WhatsappSession {
   @Activity()
   async sendText(request: MessageTextRequest) {
     const quotedMessageId = this.getReplyToMessageId(request as any);
+    const mentionedList = await this.resolveOutboundMentionsCus(
+      request.mentions,
+    );
     const options: WppSendTextOptions = {
-      mentionedList: request.mentions?.map((id) => this.ensureSuffix(id)),
+      mentionedList: mentionedList,
       quotedMsg: quotedMessageId,
       waitForAck: false,
     };
     const sent = await this.wpp!.sendText(
-      this.ensureSuffix(request.chatId),
+      await this.resolveOutboundChatId(request.chatId),
       request.text,
       options,
     );
@@ -924,7 +941,9 @@ export class WhatsappSessionWPPCore extends WhatsappSession {
 
   @Activity()
   async sendSeen(request: SendSeenRequest) {
-    await this.wpp!.sendSeen(this.ensureSuffix(request.chatId));
+    await this.wpp!.sendSeen(
+      await this.resolveOutboundChatId(request.chatId, { validate: false }),
+    );
   }
 
   @Activity()
@@ -938,19 +957,19 @@ export class WhatsappSessionWPPCore extends WhatsappSession {
         break;
       case WAHAPresenceStatus.TYPING: {
         await this.maintainPresenceOnline();
-        const normalizedChatId = this.ensureSuffix(chatId);
+        const normalizedChatId = await this.resolveOutboundChatId(chatId, { validate: false });
         await this.wpp!.startTyping(normalizedChatId);
         break;
       }
       case WAHAPresenceStatus.RECORDING: {
         await this.maintainPresenceOnline();
-        const normalizedChatId = this.ensureSuffix(chatId);
+        const normalizedChatId = await this.resolveOutboundChatId(chatId, { validate: false });
         await this.wpp!.startRecording(normalizedChatId);
         break;
       }
       case WAHAPresenceStatus.PAUSED: {
         await this.maintainPresenceOnline();
-        const normalizedChatId = this.ensureSuffix(chatId);
+        const normalizedChatId = await this.resolveOutboundChatId(chatId, { validate: false });
         await Promise.all([
           this.wpp!.stopTyping(normalizedChatId),
           this.wpp!.stopRecording(normalizedChatId),

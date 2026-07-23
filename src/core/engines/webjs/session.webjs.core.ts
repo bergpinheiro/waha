@@ -836,7 +836,7 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
    */
   @Activity()
   async rejectCall(from: string, id: string): Promise<void> {
-    const peerJid = normalizeJid(this.ensureSuffix(from));
+    const peerJid = normalizeJid(await this.resolveOutboundChatId(from, { validate: false }));
     const call = new CallInstance(this.whatsapp, null);
     call.id = id;
     call.from = peerJid;
@@ -845,10 +845,10 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
   }
 
   @Activity()
-  sendText(request: MessageTextRequest) {
+  async sendText(request: MessageTextRequest) {
     const options = this.getMessageOptions(request);
     return this.whatsapp.sendMessage(
-      this.ensureSuffix(request.chatId),
+      await this.resolveOutboundChatId(request.chatId),
       request.text,
       options,
     );
@@ -877,7 +877,7 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
 
   @Activity()
   async sendContactVCard(request: MessageContactVcardRequest) {
-    const chatId = this.ensureSuffix(request.chatId);
+    const chatId = await this.resolveOutboundChatId(request.chatId);
     const vcards = request.contacts.map((el) => toVcardV3(el as any));
     const options = this.getMessageOptions(request);
 
@@ -902,7 +902,7 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
   async reply(request: MessageReplyRequest) {
     const options = this.getMessageOptions(request);
     return this.whatsapp.sendMessage(
-      this.ensureSuffix(request.chatId),
+      await this.resolveOutboundChatId(request.chatId),
       request.text,
       options,
     );
@@ -916,7 +916,7 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
     });
     const options = this.getMessageOptions(request);
     return this.whatsapp.sendMessage(
-      this.ensureSuffix(request.chatId),
+      await this.resolveOutboundChatId(request.chatId),
       poll,
       options,
     );
@@ -935,7 +935,7 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
       caption: request.caption,
     };
     return this.whatsapp.sendMessage(
-      this.ensureSuffix(request.chatId),
+      await this.resolveOutboundChatId(request.chatId),
       media,
       options,
     );
@@ -951,7 +951,7 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
       caption: request.caption,
     };
     return this.whatsapp.sendMessage(
-      this.ensureSuffix(request.chatId),
+      await this.resolveOutboundChatId(request.chatId),
       media,
       options,
     );
@@ -970,7 +970,7 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
       sendAudioAsVoice: true,
     };
     return this.whatsapp.sendMessage(
-      this.ensureSuffix(request.chatId),
+      await this.resolveOutboundChatId(request.chatId),
       media,
       options,
     );
@@ -991,7 +991,7 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
       caption: request.caption,
     };
     return this.whatsapp.sendMessage(
-      this.ensureSuffix(request.chatId),
+      await this.resolveOutboundChatId(request.chatId),
       media,
       options,
     );
@@ -1041,7 +1041,7 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
     };
     options.extra = extra;
     return this.whatsapp.sendMessage(
-      this.ensureSuffix(request.chatId),
+      await this.resolveOutboundChatId(request.chatId),
       request.selectedDisplayText,
       options,
     );
@@ -1062,7 +1062,7 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
     });
     const options = this.getMessageOptions(request);
     return this.whatsapp.sendMessage(
-      this.ensureSuffix(request.chatId),
+      await this.resolveOutboundChatId(request.chatId),
       location,
       options,
     );
@@ -1071,7 +1071,9 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
   @Activity()
   async forwardMessage(request: MessageForwardRequest): Promise<WAMessage> {
     const forwardMessage = this.recreateMessage(request.messageId);
-    const msg = await forwardMessage.forward(this.ensureSuffix(request.chatId));
+    const msg = await forwardMessage.forward(
+      await this.resolveOutboundChatId(request.chatId),
+    );
     // Return "sent: true" for now
     // need to research how to get the data from WebJS
     // @ts-ignore
@@ -1081,7 +1083,7 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
   @Activity()
   async sendSeen(request: SendSeenRequest) {
     const chat: Chat = await this.whatsapp.getChatById(
-      this.ensureSuffix(request.chatId),
+      await this.resolveOutboundChatId(request.chatId, { validate: false }),
     );
     await chat.sendSeen();
   }
@@ -1089,7 +1091,7 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
   @Activity()
   async startTyping(request: ChatRequest): Promise<void> {
     const chat: Chat = await this.whatsapp.getChatById(
-      this.ensureSuffix(request.chatId),
+      await this.resolveOutboundChatId(request.chatId, { validate: false }),
     );
     await chat.sendStateTyping();
   }
@@ -1097,7 +1099,7 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
   @Activity()
   async stopTyping(request: ChatRequest) {
     const chat: Chat = await this.whatsapp.getChatById(
-      this.ensureSuffix(request.chatId),
+      await this.resolveOutboundChatId(request.chatId, { validate: false }),
     );
     await chat.clearState();
   }
