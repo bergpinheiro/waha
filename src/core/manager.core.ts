@@ -367,7 +367,8 @@ export class SessionManagerCore
     } else if (this.EngineClass === WhatsappSessionGoWSCore) {
       sessionConfig.engineConfig = this.gowsConfigService.getConfig();
     } else if (this.EngineClass === WhatsappSessionNoWebCore) {
-      sessionConfig.engineConfig = this.nowebEngineConfigService.getConfig();
+      sessionConfig.engineConfig =
+        await this.nowebEngineConfigService.getConfig();
     }
     // @ts-ignore
     const session = new this.EngineClass(sessionConfig);
