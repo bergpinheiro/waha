@@ -23,6 +23,7 @@ import makeWASocket, {
   WAMessageContent,
   WAMessageKey,
   WAMessageUpdate,
+  WAVersion,
 } from '@adiwajshing/baileys';
 import { WACallEvent } from '@adiwajshing/baileys/lib/Types/Call';
 import { BaileysEventMap } from '@adiwajshing/baileys/lib/Types/Events';
@@ -245,6 +246,7 @@ import { detectMimetype } from '@waha/utils/files';
 import esm from '@waha/vendor/esm';
 import axios from 'axios';
 import axiosRetry from 'axios-retry';
+import { formatWaVersion } from '@waha/core/engines/noweb/waversion';
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const promiseRetry = require('promise-retry');
 
@@ -269,11 +271,16 @@ const PresenceStatuses = {
 };
 const ToEnginePresenceStatus = flipObject(PresenceStatuses);
 
+export interface NowebConfig {
+  waVersion: WAVersion;
+}
+
 export class WhatsappSessionNoWebCore extends WhatsappSession {
   private START_ATTEMPT_DELAY_SECONDS = 2;
   private AUTO_RESTART_AFTER_SECONDS = 28 * 60;
 
   engine = WAHAEngine.NOWEB;
+  protected engineConfig: NowebConfig;
   authFactory = new NowebAuthFactoryCore();
   storageFactory = new NowebStorageFactoryCore();
   private startDelayedJob: SingleDelayedJobRunner;
@@ -391,7 +398,9 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
     if (markOnlineOnConnect == undefined) {
       markOnlineOnConnect = true;
     }
+    const version = this.engineConfig?.waVersion;
     return {
+      version: version,
       agent: agents?.socket,
       // Baileys media upload uses Node https.request in Node runtime.
       fetchAgent: agents?.fetch as Agent,
@@ -429,6 +438,9 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
       agents,
       state,
     ) as SocketConfig;
+    this.logger.info(
+      `Connecting using wa.version = ${formatWaVersion(socketConfig.version)}`,
+    );
     const sock = makeWASocket(socketConfig);
     sock.ev.on('creds.update', saveCreds);
     return sock;
