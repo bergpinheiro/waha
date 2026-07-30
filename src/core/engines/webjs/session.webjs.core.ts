@@ -836,7 +836,11 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
    */
   @Activity()
   async rejectCall(from: string, id: string): Promise<void> {
-    const peerJid = normalizeJid(await this.resolveOutboundChatId(from, { validate: false }));
+    // 'from' is the caller's own JID, not an outbound destination - reject it
+    // verbatim. Running it through resolveOutboundChatId would apply the
+    // Brazilian 9th-digit normalization and retarget the reject at a different
+    // number, which WhatsApp then drops silently (the caller keeps ringing).
+    const peerJid = normalizeJid(this.ensureSuffix(from));
     const call = new CallInstance(this.whatsapp, null);
     call.id = id;
     call.from = peerJid;

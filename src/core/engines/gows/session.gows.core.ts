@@ -1038,9 +1038,13 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
 
   @Activity()
   async rejectCall(from: string, id: string): Promise<void> {
+    // 'from' is the caller's own JID, not an outbound destination - reject it
+    // verbatim. Running it through resolveOutboundChatId would apply the
+    // Brazilian 9th-digit normalization and retarget the reject at a different
+    // number, which WhatsApp then drops silently (the caller keeps ringing).
     const request = new messages.RejectCallRequest({
       session: this.session,
-      from: normalizeJid(toJID(await this.resolveOutboundChatId(from, { validate: false }))),
+      from: normalizeJid(toJID(this.ensureSuffix(from))),
       id: id,
     });
     await promisify(this.client.RejectCall)(request);
