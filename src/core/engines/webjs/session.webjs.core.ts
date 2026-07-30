@@ -150,12 +150,12 @@ import {
   WAMessageRevokedBody,
 } from '@waha/structures/webhooks.dto';
 import { PaginatorInMemory } from '@waha/utils/Paginator';
-import { sleep, waitUntil } from '@waha/utils/promiseTimeout';
+import { promiseTimeout, sleep, waitUntil } from '@waha/utils/promiseTimeout';
 import { SingleDelayedJobRunner } from '@waha/utils/SingleDelayedJobRunner';
 import { TmpDir } from '@waha/utils/tmpdir';
 import * as lodash from 'lodash';
 import * as path from 'path';
-import { ProtocolError } from 'puppeteer';
+import { Browser, ProtocolError } from 'puppeteer';
 import {
   filter,
   fromEvent,
@@ -220,6 +220,8 @@ export interface WebJSConfig {
 
 export class WhatsappSessionWebJSCore extends WhatsappSession {
   private START_ATTEMPT_DELAY_SECONDS = 2;
+  // how long to wait on stop for the browser to close gracefully before force-killing it
+  private DESTROY_TIMEOUT_MS = 10_000;
 
   authFactory = new WebJSAuthFactory();
 
@@ -455,11 +457,11 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
   async stop() {
     this.cleanupPresenceTimeout();
     this.shouldRestart = false;
+    this.startDelayedJob.cancel();
+    await this.end();
     this.status = WAHASessionStatus.STOPPED;
     this.stopEvents();
-    this.startDelayedJob.cancel();
     this.mediaManager.close();
-    await this.end();
   }
 
   protected failed() {
@@ -516,10 +518,14 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
     }
 
     try {
-      await this.whatsapp?.destroy();
+      await promiseTimeout(this.DESTROY_TIMEOUT_MS, this.whatsapp?.destroy());
       this.logger.debug('Successfully destroyed whatsapp client');
     } catch (error) {
       this.logger.error(error, 'Failed to destroy whatsapp client');
+      const browser = this.whatsapp?.pupBrowser;
+      if (browser) {
+        await this.kill(browser);
+      }
     }
 
     try {
@@ -530,6 +536,33 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
     } catch (error) {
       this.logger.error(error, 'Failed to destroy auth strategy');
     }
+  }
+
+  /**
+   * Force-kill the Chromium process when the graceful destroy() failed or timed out.
+   * Throws if the browser can not be proven dead - the session is not fully stopped then.
+   */
+  private async kill(browser: Browser) {
+    // shadows the Node.js global 'process' on purpose - the global one is not used here
+    const process = browser.process();
+    if (!process) {
+      // remote or attached browser - we have no process handle to kill
+      throw new Error(
+        'No browser process to kill, can not guarantee the browser is closed',
+      );
+    }
+    if (process.exitCode !== null || process.signalCode !== null) {
+      return;
+    }
+    this.logger.warn('Force killing the browser process');
+    const exited = new Promise<void>((resolve) =>
+      process.once('exit', () => resolve()),
+    );
+    process.kill('SIGKILL');
+    // the session is stopped only when the browser process is really dead - verify it, do not assume
+    await promiseTimeout(5_000, exited).catch(() => {
+      throw new Error('The browser process did not exit after SIGKILL');
+    });
   }
 
   getSessionMeInfo(): MeInfo | null {
