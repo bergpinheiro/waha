@@ -43,11 +43,11 @@ process.on('unhandledRejection', (reason, promise) => {
 });
 logger.info('NODE - Catching unhandled rejections and exceptions enabled');
 
-process.on('SIGINT', () => {
+process.once('SIGINT', () => {
   logger.info('SIGINT received');
 });
 
-process.on('SIGTERM', () => {
+process.once('SIGTERM', () => {
   logger.info('SIGTERM received');
 });
 
