@@ -151,6 +151,30 @@ export class GowsStorageConfig {
   @IsBoolean()
   @IsOptional()
   labels?: boolean | null;
+
+  @ApiProperty({
+    description:
+      'Store contacts locally. Set to false to disable; omit or null to keep enabled. ' +
+      'When disabled: contacts API returns no data, no contact names in chats, ' +
+      'no PushName/BusinessName events, and sending status to all contacts does not work.',
+    required: false,
+    example: true,
+  })
+  @IsBoolean()
+  @IsOptional()
+  contacts?: boolean | null;
+
+  @ApiProperty({
+    description:
+      'Store message secrets locally. Set to false to disable; omit or null to keep enabled. ' +
+      'When disabled: incoming poll votes, event responses and bot messages can not be decrypted, ' +
+      'and sending own poll votes does not work.',
+    required: false,
+    example: true,
+  })
+  @IsBoolean()
+  @IsOptional()
+  messageSecrets?: boolean | null;
 }
 
 export class GowsConfig {
@@ -295,6 +319,8 @@ export class SessionConfig {
         groups: true,
         chats: true,
         labels: true,
+        contacts: true,
+        messageSecrets: true,
       },
     },
   })

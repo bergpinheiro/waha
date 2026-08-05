@@ -4816,7 +4816,9 @@ proto.messages.SessionStorageConfig.toObject = function(includeInstance, msg) {
     messages: jspb.Message.getBooleanFieldWithDefault(msg, 1, false),
     groups: jspb.Message.getBooleanFieldWithDefault(msg, 2, false),
     chats: jspb.Message.getBooleanFieldWithDefault(msg, 3, false),
-    labels: jspb.Message.getBooleanFieldWithDefault(msg, 4, false)
+    labels: jspb.Message.getBooleanFieldWithDefault(msg, 4, false),
+    contacts: jspb.Message.getBooleanFieldWithDefault(msg, 5, false),
+    messageSecrets: jspb.Message.getBooleanFieldWithDefault(msg, 6, false)
   };
 
   if (includeInstance) {
@@ -4868,6 +4870,14 @@ proto.messages.SessionStorageConfig.deserializeBinaryFromReader = function(msg, 
     case 4:
       var value = /** @type {boolean} */ (reader.readBool());
       msg.setLabels(value);
+      break;
+    case 5:
+      var value = /** @type {boolean} */ (reader.readBool());
+      msg.setContacts(value);
+      break;
+    case 6:
+      var value = /** @type {boolean} */ (reader.readBool());
+      msg.setMessageSecrets(value);
       break;
     default:
       reader.skipField();
@@ -4923,6 +4933,20 @@ proto.messages.SessionStorageConfig.serializeBinaryToWriter = function(message, 
   if (f != null) {
     writer.writeBool(
       4,
+      f
+    );
+  }
+  f = /** @type {boolean} */ (jspb.Message.getField(message, 5));
+  if (f != null) {
+    writer.writeBool(
+      5,
+      f
+    );
+  }
+  f = /** @type {boolean} */ (jspb.Message.getField(message, 6));
+  if (f != null) {
+    writer.writeBool(
+      6,
       f
     );
   }
@@ -5070,6 +5094,78 @@ proto.messages.SessionStorageConfig.prototype.clearLabels = function() {
  */
 proto.messages.SessionStorageConfig.prototype.hasLabels = function() {
   return jspb.Message.getField(this, 4) != null;
+};
+
+
+/**
+ * optional bool contacts = 5;
+ * @return {boolean}
+ */
+proto.messages.SessionStorageConfig.prototype.getContacts = function() {
+  return /** @type {boolean} */ (jspb.Message.getBooleanFieldWithDefault(this, 5, false));
+};
+
+
+/**
+ * @param {boolean} value
+ * @return {!proto.messages.SessionStorageConfig} returns this
+ */
+proto.messages.SessionStorageConfig.prototype.setContacts = function(value) {
+  return jspb.Message.setField(this, 5, value);
+};
+
+
+/**
+ * Clears the field making it undefined.
+ * @return {!proto.messages.SessionStorageConfig} returns this
+ */
+proto.messages.SessionStorageConfig.prototype.clearContacts = function() {
+  return jspb.Message.setField(this, 5, undefined);
+};
+
+
+/**
+ * Returns whether this field is set.
+ * @return {boolean}
+ */
+proto.messages.SessionStorageConfig.prototype.hasContacts = function() {
+  return jspb.Message.getField(this, 5) != null;
+};
+
+
+/**
+ * optional bool message_secrets = 6;
+ * @return {boolean}
+ */
+proto.messages.SessionStorageConfig.prototype.getMessageSecrets = function() {
+  return /** @type {boolean} */ (jspb.Message.getBooleanFieldWithDefault(this, 6, false));
+};
+
+
+/**
+ * @param {boolean} value
+ * @return {!proto.messages.SessionStorageConfig} returns this
+ */
+proto.messages.SessionStorageConfig.prototype.setMessageSecrets = function(value) {
+  return jspb.Message.setField(this, 6, value);
+};
+
+
+/**
+ * Clears the field making it undefined.
+ * @return {!proto.messages.SessionStorageConfig} returns this
+ */
+proto.messages.SessionStorageConfig.prototype.clearMessageSecrets = function() {
+  return jspb.Message.setField(this, 6, undefined);
+};
+
+
+/**
+ * Returns whether this field is set.
+ * @return {boolean}
+ */
+proto.messages.SessionStorageConfig.prototype.hasMessageSecrets = function() {
+  return jspb.Message.getField(this, 6) != null;
 };
 
 

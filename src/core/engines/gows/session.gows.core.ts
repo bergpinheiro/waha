@@ -224,6 +224,8 @@ function getGowsStorageConfig(
     groups: storeConfig?.groups !== false,
     chats: storeConfig?.chats !== false,
     labels: storeConfig?.labels !== false,
+    contacts: storeConfig?.contacts !== false,
+    message_secrets: storeConfig?.messageSecrets !== false,
   });
 }
 

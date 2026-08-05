@@ -1423,7 +1423,7 @@ export namespace messages {
         }
     }
     export class SessionStorageConfig extends pb_1.Message {
-        #one_of_decls: number[][] = [[1], [2], [3], [4]];
+        #one_of_decls: number[][] = [[1], [2], [3], [4], [5], [6]];
         constructor(data?: any[] | ({} & (({
             messages?: boolean;
         }) | ({
@@ -1432,6 +1432,10 @@ export namespace messages {
             chats?: boolean;
         }) | ({
             labels?: boolean;
+        }) | ({
+            contacts?: boolean;
+        }) | ({
+            message_secrets?: boolean;
         })))) {
             super();
             pb_1.Message.initialize(this, Array.isArray(data) ? data : [], 0, -1, [], this.#one_of_decls);
@@ -1447,6 +1451,12 @@ export namespace messages {
                 }
                 if ("labels" in data && data.labels != undefined) {
                     this.labels = data.labels;
+                }
+                if ("contacts" in data && data.contacts != undefined) {
+                    this.contacts = data.contacts;
+                }
+                if ("message_secrets" in data && data.message_secrets != undefined) {
+                    this.message_secrets = data.message_secrets;
                 }
             }
         }
@@ -1486,6 +1496,24 @@ export namespace messages {
         get has_labels() {
             return pb_1.Message.getField(this, 4) != null;
         }
+        get contacts() {
+            return pb_1.Message.getFieldWithDefault(this, 5, false) as boolean;
+        }
+        set contacts(value: boolean) {
+            pb_1.Message.setOneofField(this, 5, this.#one_of_decls[4], value);
+        }
+        get has_contacts() {
+            return pb_1.Message.getField(this, 5) != null;
+        }
+        get message_secrets() {
+            return pb_1.Message.getFieldWithDefault(this, 6, false) as boolean;
+        }
+        set message_secrets(value: boolean) {
+            pb_1.Message.setOneofField(this, 6, this.#one_of_decls[5], value);
+        }
+        get has_message_secrets() {
+            return pb_1.Message.getField(this, 6) != null;
+        }
         get _messages() {
             const cases: {
                 [index: number]: "none" | "messages";
@@ -1522,11 +1550,31 @@ export namespace messages {
             };
             return cases[pb_1.Message.computeOneofCase(this, [4])];
         }
+        get _contacts() {
+            const cases: {
+                [index: number]: "none" | "contacts";
+            } = {
+                0: "none",
+                5: "contacts"
+            };
+            return cases[pb_1.Message.computeOneofCase(this, [5])];
+        }
+        get _message_secrets() {
+            const cases: {
+                [index: number]: "none" | "message_secrets";
+            } = {
+                0: "none",
+                6: "message_secrets"
+            };
+            return cases[pb_1.Message.computeOneofCase(this, [6])];
+        }
         static fromObject(data: {
             messages?: boolean;
             groups?: boolean;
             chats?: boolean;
             labels?: boolean;
+            contacts?: boolean;
+            message_secrets?: boolean;
         }): SessionStorageConfig {
             const message = new SessionStorageConfig({});
             if (data.messages != null) {
@@ -1541,6 +1589,12 @@ export namespace messages {
             if (data.labels != null) {
                 message.labels = data.labels;
             }
+            if (data.contacts != null) {
+                message.contacts = data.contacts;
+            }
+            if (data.message_secrets != null) {
+                message.message_secrets = data.message_secrets;
+            }
             return message;
         }
         toObject() {
@@ -1549,6 +1603,8 @@ export namespace messages {
                 groups?: boolean;
                 chats?: boolean;
                 labels?: boolean;
+                contacts?: boolean;
+                message_secrets?: boolean;
             } = {};
             if (this.messages != null) {
                 data.messages = this.messages;
@@ -1561,6 +1617,12 @@ export namespace messages {
             }
             if (this.labels != null) {
                 data.labels = this.labels;
+            }
+            if (this.contacts != null) {
+                data.contacts = this.contacts;
+            }
+            if (this.message_secrets != null) {
+                data.message_secrets = this.message_secrets;
             }
             return data;
         }
@@ -1576,6 +1638,10 @@ export namespace messages {
                 writer.writeBool(3, this.chats);
             if (this.has_labels)
                 writer.writeBool(4, this.labels);
+            if (this.has_contacts)
+                writer.writeBool(5, this.contacts);
+            if (this.has_message_secrets)
+                writer.writeBool(6, this.message_secrets);
             if (!w)
                 return writer.getResultBuffer();
         }
@@ -1596,6 +1662,12 @@ export namespace messages {
                         break;
                     case 4:
                         message.labels = reader.readBool();
+                        break;
+                    case 5:
+                        message.contacts = reader.readBool();
+                        break;
+                    case 6:
+                        message.message_secrets = reader.readBool();
                         break;
                     default: reader.skipField();
                 }
