@@ -39,6 +39,7 @@ import {
   ChatWootAppConfig,
   ChatWootConfig,
 } from '@waha/apps/chatwoot/dto/config.dto';
+import { clearContent } from '@waha/apps/chatwoot/consumers/utils';
 
 export function ListenEventsForChatWoot(config: ChatWootConfig) {
   const events = [
@@ -329,6 +330,8 @@ export abstract class MessageBaseHandler<
       `Created message as '${message.message_type}' from WhatsApp: ${response.id}`,
     );
     await this.saveMapping(response, payload);
+    // Clear attachments content to avoid saving it in the task result
+    message.attachments = clearContent(message.attachments);
     return message;
   }
 
