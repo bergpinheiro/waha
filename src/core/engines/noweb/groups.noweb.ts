@@ -17,7 +17,7 @@ import {
   GroupV2ParticipantsEvent,
   GroupV2UpdateEvent,
 } from '@waha/structures/groups.events.dto';
-import { toCusFormat } from '@waha/core/utils/jids';
+import { isPnUser, toCusFormat } from '@waha/core/utils/jids';
 import esm from '@waha/vendor/esm';
 
 export function ToGroupInfo(group: Partial<GroupMetadata>): GroupInfo {
@@ -77,6 +77,15 @@ export function getParticipantId(
   return participant?.id;
 }
 
+function getParticipantPn(
+  participant: string | NOWEBGroupParticipant,
+): string | null {
+  if (typeof participant === 'string') {
+    return isPnUser(participant) ? participant : null;
+  }
+  return participant?.phoneNumber || null;
+}
+
 function getParticipantIds(
   participant: string | NOWEBGroupParticipant,
 ): string[] {
@@ -129,6 +138,7 @@ export function ToGroupV2Participants(
     const id = getParticipantId(item);
     return {
       id: toCusFormat(id),
+      pn: toCusFormat(getParticipantPn(item)),
       role: role,
     };
   });

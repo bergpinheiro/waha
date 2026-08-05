@@ -140,6 +140,7 @@ export function ToGroupV2ParticipantsEvent(
     (id) => {
       return {
         id: id,
+        pn: isPnUser(id) ? id : null,
         role: role,
       };
     },

@@ -1,4 +1,4 @@
-import { toCusFormat } from '@waha/core/utils/jids';
+import { isPnUser, toCusFormat } from '@waha/core/utils/jids';
 import { SerializeMsgKey } from '@waha/core/utils/ids';
 import { WAMessageReaction } from '@waha/structures/responses.dto';
 import { WAHAPresenceStatus } from '@waha/structures/enums.dto';
@@ -109,7 +109,7 @@ export function WppParticipantsToGroupV2Participants(
   const group: GroupId = { id: toCusFormat(data.groupId) };
   const participants: GroupParticipant[] = data.who.map((id) => ({
     id: id,
-    pn: null,
+    pn: isPnUser(id) ? id : null,
     role: role,
   }));
 

@@ -4,7 +4,7 @@ import {
   GroupInfoFull,
   JoinedGroupEvent,
 } from '@waha/core/engines/gows/types.group';
-import { toCusFormat, toJID } from '@waha/core/utils/jids';
+import { isPnUser, toCusFormat, toJID } from '@waha/core/utils/jids';
 import {
   GroupId,
   GroupInfo,
@@ -115,8 +115,10 @@ function getParticipants(jids: string[] | null, type: GroupParticipantType) {
   }
   const participants: GroupParticipant[] = [];
   for (const jid of jids) {
+    const id = toCusFormat(jid);
     participants.push({
-      id: toCusFormat(jid),
+      id: id,
+      pn: isPnUser(id) ? id : null,
       role: role,
     });
   }
