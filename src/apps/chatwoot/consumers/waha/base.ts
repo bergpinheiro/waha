@@ -320,6 +320,7 @@ export abstract class MessageBaseHandler<
       this.session,
       EngineHelper.ChatID(payload as any),
       this.l,
+      EngineHelper.PhoneNumber(payload as any),
     );
     const conversation = await this.repo.ConversationByContact(contactInfo);
     this.info.onConversationId(conversation.conversationId);

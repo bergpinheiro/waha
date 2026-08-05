@@ -89,9 +89,21 @@ class JidContactInfo extends ChatContactInfo {
  * LID contact info
  */
 class LidContactInfo extends ChatContactInfo {
+  constructor(
+    session: WAHASessionAPI,
+    chatId: string,
+    locale: Locale,
+    private pn: string | null = null,
+  ) {
+    super(session, chatId, locale);
+  }
+
   @CacheAsync()
   async jid() {
-    const pn = await this.session.findPNByLid(this.chatId);
+    let pn = this.pn;
+    if (!pn) {
+      pn = await this.session.findPNByLid(this.chatId);
+    }
     if (!pn) {
       return null;
     }
@@ -261,6 +273,7 @@ export function WhatsAppContactInfo(
   session: WAHASessionAPI,
   chatId: string,
   locale: Locale,
+  pn: string | null = null,
 ): ContactInfo {
   if (isJidGroup(chatId)) {
     return new GroupContactInfo(session, chatId, locale);
@@ -271,7 +284,7 @@ export function WhatsAppContactInfo(
   } else if (isJidBroadcast(chatId)) {
     return new BroadcastContactInfo(session, chatId, locale);
   } else if (isLidUser(chatId)) {
-    return new LidContactInfo(session, normalizeJid(chatId), locale);
+    return new LidContactInfo(session, normalizeJid(chatId), locale, pn);
   } else if (isPnUser(chatId)) {
     return new JidContactInfo(session, chatId, locale);
   } else {
