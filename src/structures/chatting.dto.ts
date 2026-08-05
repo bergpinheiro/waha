@@ -422,6 +422,14 @@ export class WANumberExistResult {
       'Chat id for the phone number. Undefined if the number does not exist',
   })
   chatId?: string;
+
+  @ApiProperty({
+    description:
+      'Phone number id (@c.us). Can be null when only a @lid chatId is known',
+    example: '11111111111@c.us',
+    required: false,
+  })
+  pn?: string;
 }
 
 export class MessagePoll {

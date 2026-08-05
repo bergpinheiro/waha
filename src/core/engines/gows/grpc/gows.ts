@@ -6396,6 +6396,7 @@ export namespace messages {
             phone?: string;
             jid?: string;
             registered?: boolean;
+            pn?: string;
         }) {
             super();
             pb_1.Message.initialize(this, Array.isArray(data) ? data : [], 0, -1, [], this.#one_of_decls);
@@ -6408,6 +6409,9 @@ export namespace messages {
                 }
                 if ("registered" in data && data.registered != undefined) {
                     this.registered = data.registered;
+                }
+                if ("pn" in data && data.pn != undefined) {
+                    this.pn = data.pn;
                 }
             }
         }
@@ -6429,10 +6433,17 @@ export namespace messages {
         set registered(value: boolean) {
             pb_1.Message.setField(this, 3, value);
         }
+        get pn() {
+            return pb_1.Message.getFieldWithDefault(this, 4, "") as string;
+        }
+        set pn(value: string) {
+            pb_1.Message.setField(this, 4, value);
+        }
         static fromObject(data: {
             phone?: string;
             jid?: string;
             registered?: boolean;
+            pn?: string;
         }): PhoneInfo {
             const message = new PhoneInfo({});
             if (data.phone != null) {
@@ -6444,6 +6455,9 @@ export namespace messages {
             if (data.registered != null) {
                 message.registered = data.registered;
             }
+            if (data.pn != null) {
+                message.pn = data.pn;
+            }
             return message;
         }
         toObject() {
@@ -6451,6 +6465,7 @@ export namespace messages {
                 phone?: string;
                 jid?: string;
                 registered?: boolean;
+                pn?: string;
             } = {};
             if (this.phone != null) {
                 data.phone = this.phone;
@@ -6460,6 +6475,9 @@ export namespace messages {
             }
             if (this.registered != null) {
                 data.registered = this.registered;
+            }
+            if (this.pn != null) {
+                data.pn = this.pn;
             }
             return data;
         }
@@ -6473,6 +6491,8 @@ export namespace messages {
                 writer.writeString(2, this.jid);
             if (this.registered != false)
                 writer.writeBool(3, this.registered);
+            if (this.pn.length)
+                writer.writeString(4, this.pn);
             if (!w)
                 return writer.getResultBuffer();
         }
@@ -6490,6 +6510,9 @@ export namespace messages {
                         break;
                     case 3:
                         message.registered = reader.readBool();
+                        break;
+                    case 4:
+                        message.pn = reader.readString();
                         break;
                     default: reader.skipField();
                 }

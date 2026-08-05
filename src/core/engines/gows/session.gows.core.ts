@@ -1274,6 +1274,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
     return {
       numberExists: info?.registered || false,
       chatId: toCusFormat(info?.jid || null),
+      pn: toCusFormat(info?.pn || null),
     };
   }
 

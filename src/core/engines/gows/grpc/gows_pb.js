@@ -13869,7 +13869,8 @@ proto.messages.PhoneInfo.toObject = function(includeInstance, msg) {
   var f, obj = {
     phone: jspb.Message.getFieldWithDefault(msg, 1, ""),
     jid: jspb.Message.getFieldWithDefault(msg, 2, ""),
-    registered: jspb.Message.getBooleanFieldWithDefault(msg, 3, false)
+    registered: jspb.Message.getBooleanFieldWithDefault(msg, 3, false),
+    pn: jspb.Message.getFieldWithDefault(msg, 4, "")
   };
 
   if (includeInstance) {
@@ -13918,6 +13919,10 @@ proto.messages.PhoneInfo.deserializeBinaryFromReader = function(msg, reader) {
       var value = /** @type {boolean} */ (reader.readBool());
       msg.setRegistered(value);
       break;
+    case 4:
+      var value = /** @type {string} */ (reader.readString());
+      msg.setPn(value);
+      break;
     default:
       reader.skipField();
       break;
@@ -13965,6 +13970,13 @@ proto.messages.PhoneInfo.serializeBinaryToWriter = function(message, writer) {
   if (f) {
     writer.writeBool(
       3,
+      f
+    );
+  }
+  f = message.getPn();
+  if (f.length > 0) {
+    writer.writeString(
+      4,
       f
     );
   }
@@ -14022,6 +14034,24 @@ proto.messages.PhoneInfo.prototype.getRegistered = function() {
  */
 proto.messages.PhoneInfo.prototype.setRegistered = function(value) {
   return jspb.Message.setProto3BooleanField(this, 3, value);
+};
+
+
+/**
+ * optional string pn = 4;
+ * @return {string}
+ */
+proto.messages.PhoneInfo.prototype.getPn = function() {
+  return /** @type {string} */ (jspb.Message.getFieldWithDefault(this, 4, ""));
+};
+
+
+/**
+ * @param {string} value
+ * @return {!proto.messages.PhoneInfo} returns this
+ */
+proto.messages.PhoneInfo.prototype.setPn = function(value) {
+  return jspb.Message.setProto3StringField(this, 4, value);
 };
 
 
