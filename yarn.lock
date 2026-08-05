@@ -4625,12 +4625,12 @@ __metadata:
   linkType: hard
 
 "@wppconnect-team/wppconnect@github:wppconnect-team/wppconnect#master":
-  version: 2.2.4
-  resolution: "@wppconnect-team/wppconnect@https://github.com/wppconnect-team/wppconnect.git#commit=a27f6db8489d2a8da5b3d976506f29e8d8685b09"
+  version: 2.2.6
+  resolution: "@wppconnect-team/wppconnect@https://github.com/wppconnect-team/wppconnect.git#commit=a2344e3b58d2711e2862082b77949748119d6eb7"
   dependencies:
     "@img/sharp-win32-x64": "npm:^0.35.3"
-    "@wppconnect/wa-js": "npm:^4.4.2"
-    "@wppconnect/wa-version": "npm:^1.5.3941"
+    "@wppconnect/wa-js": "npm:^4.4.3"
+    "@wppconnect/wa-version": "npm:^1.5.4472"
     atob: "npm:^2.1.2"
     axios: "npm:^1.18.1"
     boxen: "npm:^5.1.2"
@@ -4658,37 +4658,37 @@ __metadata:
     tmp: "npm:^0.2.7"
     tree-kill: "npm:^1.2.2"
     winston: "npm:^3.19.0"
-    ws: "npm:^8.21.0"
+    ws: "npm:^8.21.1"
   dependenciesMeta:
     "@img/sharp-win32-x64":
       optional: true
     fsevents:
       optional: true
-  checksum: 10/05db0d092e124dd08df2c68f02dffcd580204fb485485a7ba4baa6399ca928f5305b50744385f4a3ad3741275bc11bda489126550c190140eb98abab9b4a614c
+  checksum: 10/f14a2baaceb857b046b5d396da586192704a2d272d06009645f73f78528e165fc026521e4138bd76a4204577a0e5a10f0801689f0717d3dea6f596afe1b77b6f
   languageName: node
   linkType: hard
 
 "@wppconnect/wa-js@github:wppconnect-team/wa-js#main":
-  version: 4.4.1
-  resolution: "@wppconnect/wa-js@https://github.com/wppconnect-team/wa-js.git#commit=1f7cc7e12e2cf9246a65bb8de4348055016f374e"
-  checksum: 10/8c6a370cfa6d4ec516664b71fd1b0e4300f3dc28433925cace8df7954c6b1781913c9993d573cb39cb78d363b3edf2f4d23255655d4cdd053296ffe4534c1170
+  version: 4.5.0
+  resolution: "@wppconnect/wa-js@https://github.com/wppconnect-team/wa-js.git#commit=b7f1a18ea9fbae6167df6f77ab364ae8ed41c6be"
+  checksum: 10/35f1f951d7853b0080b4d7bdbd146ca9f6fe8458a4a2237cec35ddf9a17f2af0e41d67c87d6c680b531ab3c7b3e3dcf0522fa09f6d81606f2468345839ff06f6
   languageName: node
   linkType: hard
 
-"@wppconnect/wa-js@npm:^4.4.2":
-  version: 4.4.2
-  resolution: "@wppconnect/wa-js@npm:4.4.2"
-  checksum: 10/3281bcd4dca694a04814ef3d95db2930669f3f742ee964bad9303c0eace2d5ea8861241e3999ec9f96932b2541a5137fcea6d0ec15c4b2b61f7481015a108619
+"@wppconnect/wa-js@npm:^4.4.3":
+  version: 4.5.0
+  resolution: "@wppconnect/wa-js@npm:4.5.0"
+  checksum: 10/59018023978cad0afb789383babe1f57dc8489aced35cc1b0a1bed035e9592ae5f10e0821d73b3a2f4d76fcbbc5a3e6ffb2ee227a80fc2421339c51d86031770
   languageName: node
   linkType: hard
 
-"@wppconnect/wa-version@npm:^1.5.3941":
-  version: 1.5.4014
-  resolution: "@wppconnect/wa-version@npm:1.5.4014"
+"@wppconnect/wa-version@npm:^1.5.4472":
+  version: 1.5.4519
+  resolution: "@wppconnect/wa-version@npm:1.5.4519"
   dependencies:
     node-fetch: "npm:^2.7.0"
-    semver: "npm:^7.7.4"
-  checksum: 10/97916af06fc2d1817cb3122233577b39047c46aa607ba0a14ff8d0ba9decd62a1d0220fc658da97dea378f433cc4b3bae89960d25320ae456d905b687ba40ad3
+    semver: "npm:^7.8.5"
+  checksum: 10/0a26d2cae9616fc3d31cd692d182020bf318aa205e19b869b78320404ce5938228eaa95c7ec27fc79af1c2992272fd3c805c89c07f85b8dca4c21cd7b5f92420
   languageName: node
   linkType: hard
 
@@ -12385,12 +12385,12 @@ __metadata:
   languageName: node
   linkType: hard
 
-"semver@npm:^7.7.4":
-  version: 7.7.4
-  resolution: "semver@npm:7.7.4"
+"semver@npm:^7.8.5":
+  version: 7.8.5
+  resolution: "semver@npm:7.8.5"
   bin:
     semver: bin/semver.js
-  checksum: 10/26bdc6d58b29528f4142d29afb8526bc335f4fc04c4a10f2b98b217f277a031c66736bf82d3d3bb354a2f6a3ae50f18fd62b053c4ac3f294a3d10a61f5075b75
+  checksum: 10/9b01d2ff11e6e4a4539b7ca3c5f280c8704cb397a28504469f2ed4f00ad2194748d756647362a9712fff30984d15772ab7f083108c2fb508e2096ae9e708f22c
   languageName: node
   linkType: hard
 
