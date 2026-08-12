@@ -1,3 +1,4 @@
+import { proto } from '@adiwajshing/baileys';
 import { UnprocessableEntityException } from '@nestjs/common';
 import { createMediaProcessor } from '@zapo-js/media-utils';
 import { WhatsappSession } from '@waha/core/abc/session.abc';
@@ -9,18 +10,25 @@ import { extractMediaContent } from '@waha/core/engines/noweb/utils';
 import { createAgentProxy } from '@waha/core/helpers.proxy';
 import { IMediaEngineProcessor } from '@waha/core/media/IMediaEngineProcessor';
 import { QR } from '@waha/core/QR';
-import { SerializeMessageKey } from '@waha/core/utils/ids';
+import {
+  parseMessageIdSerialized,
+  SerializeMessageKey,
+} from '@waha/core/utils/ids';
 import { toCusFormat, toJID } from '@waha/core/utils/jids';
 import { PairingCodeResponse } from '@waha/structures/auth.dto';
 import {
   ChatRequest,
   CheckNumberStatusQuery,
+  EditMessageRequest,
   MessageFileRequest,
   MessageForwardRequest,
   MessageImageRequest,
   MessageLocationRequest,
+  MessagePollRequest,
+  MessagePollVoteRequest,
   MessageReactionRequest,
   MessageReplyRequest,
+  MessageStarRequest,
   MessageTextRequest,
   MessageVideoRequest,
   MessageVoiceRequest,
@@ -45,6 +53,7 @@ import { filter, map, mergeMap } from 'rxjs/operators';
 import {
   WaClient,
   WaIncomingMessageEvent,
+  WaMessageKey,
   WaMessagePublishResult,
   WaSendMessageContent,
   WaStore,
@@ -100,6 +109,20 @@ const ZAPO_RECEIPT_TO_ACK = {
   'read-self': WAMessageAck.READ,
   played: WAMessageAck.PLAYED,
 };
+
+/**
+ * WAHA's parsed key has every field optional; zapo requires remoteJid, id and
+ * fromMe, so the shape is restated instead of cast.
+ */
+function toZapoKey(messageId: string, chatId?: string): WaMessageKey {
+  const key = parseMessageIdSerialized(messageId);
+  return {
+    remoteJid: key.remoteJid ?? toJID(chatId),
+    id: key.id,
+    fromMe: Boolean(key.fromMe),
+    participant: key.participant,
+  };
+}
 
 function buildMessageId(key: any): string {
   return SerializeMessageKey({
@@ -429,9 +452,30 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     return this.toSentMessage(chatId, result);
   }
 
+  /**
+   * Forwarding needs the original content, which the message store keeps as
+   * raw proto bytes. A message the session never saw cannot be forwarded.
+   */
   @Activity()
   async forwardMessage(request: MessageForwardRequest): Promise<WAMessage> {
-    throw new NotImplementedByEngineError();
+    const key = toZapoKey(request.messageId, request.chatId);
+    const stored = await this.store.session(this.name).messages.getById(key.id);
+    if (!stored?.messageBytes) {
+      throw new UnprocessableEntityException(
+        `Message '${request.messageId}' is not available to forward.`,
+      );
+    }
+    // Both packages generate their own class for the same protobuf message,
+    // so the structurally identical value needs a bridge through the shape
+    // zapo declares.
+    const content = proto.Message.decode(
+      stored.messageBytes,
+    ) as unknown as WaSendMessageContent;
+    const jid = toJID(request.chatId);
+    const result = await this.client.message.send(jid, content, {
+      forward: true,
+    });
+    return this.toSentMessage(jid, result);
   }
 
   @Activity()
@@ -458,7 +502,125 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
 
   @Activity()
   async setReaction(request: MessageReactionRequest) {
-    throw new NotImplementedByEngineError();
+    const key = toZapoKey(request.messageId);
+    // An empty emoji revokes the reaction, which is what WAHA sends too.
+    await this.client.message.send(key.remoteJid, {
+      type: 'reaction',
+      emoji: request.reaction,
+      target: key,
+    });
+  }
+
+  @Activity()
+  async setStar(request: MessageStarRequest): Promise<void> {
+    const key = toZapoKey(request.messageId, request.chatId);
+    // The app-state mutation uses its own key naming.
+    await this.client.chat.setMessageStar(
+      {
+        chatJid: key.remoteJid,
+        id: key.id,
+        fromMe: key.fromMe,
+        participantJid: key.participant,
+      },
+      request.star,
+    );
+  }
+
+  @Activity()
+  async deleteMessage(chatId: string, messageId: string) {
+    const key = toZapoKey(messageId, chatId);
+    await this.client.message.send(toJID(chatId), {
+      type: 'revoke',
+      target: key,
+    });
+  }
+
+  @Activity()
+  async editMessage(
+    chatId: string,
+    messageId: string,
+    request: EditMessageRequest,
+  ) {
+    const key = toZapoKey(messageId, chatId);
+    const jid = toJID(chatId);
+    const result = await this.client.message.send(
+      jid,
+      { type: 'text', text: request.text },
+      {
+        editKey: { id: key.id },
+        mentions: this.toMentionJids(request.mentions),
+      },
+    );
+    return this.toSentMessage(jid, result);
+  }
+
+  @Activity()
+  async pinMessage(
+    chatId: string,
+    messageId: string,
+    duration: number,
+  ): Promise<boolean> {
+    const key = toZapoKey(messageId, chatId);
+    // Without a duration the receiving clients drop the pin silently.
+    await this.client.message.send(toJID(chatId), {
+      type: 'pin',
+      target: key,
+      durationSecs: duration,
+    });
+    return true;
+  }
+
+  @Activity()
+  async unpinMessage(chatId: string, messageId: string): Promise<boolean> {
+    const key = toZapoKey(messageId, chatId);
+    await this.client.message.send(toJID(chatId), {
+      type: 'unpin',
+      target: key,
+    });
+    return true;
+  }
+
+  @Activity()
+  async sendPoll(request: MessagePollRequest) {
+    const jid = toJID(request.chatId);
+    const result = await this.client.message.send(jid, {
+      type: 'poll',
+      name: request.poll.name,
+      options: request.poll.options,
+      selectableCount: request.poll.multipleAnswers
+        ? request.poll.options.length
+        : 1,
+    });
+    return this.toSentMessage(jid, result);
+  }
+
+  /**
+   * A vote is encrypted with the parent poll's secret, which the library keeps
+   * in the message-secret store when the poll arrives. A poll this session
+   * never received cannot be voted on.
+   */
+  @Activity()
+  async sendPollVote(request: MessagePollVoteRequest) {
+    const key = toZapoKey(request.pollMessageId, request.chatId);
+    const entry = await this.store.session(this.name).messageSecret.get(key.id);
+    if (!entry) {
+      throw new UnprocessableEntityException(
+        `Poll '${request.pollMessageId}' is not available to vote on.`,
+      );
+    }
+    const jid = toJID(request.chatId);
+    const result = await this.client.message.send(jid, {
+      type: 'poll-vote',
+      poll: {
+        id: key.id,
+        fromMe: key.fromMe,
+        participant: key.participant,
+        authorJid: entry.senderJid,
+        messageSecret: entry.secret,
+      },
+      selectedOptionNames: request.votes,
+    });
+    return this.toSentMessage(jid, result);
   }
 
   async readChatMessages(
