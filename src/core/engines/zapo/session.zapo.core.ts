@@ -4,8 +4,12 @@ import { WhatsappSession } from '@waha/core/abc/session.abc';
 import { ZapoEngineLogger } from '@waha/core/engines/zapo/ZapoEngineLogger';
 import { ZapoStoreFactoryCore } from '@waha/core/engines/zapo/store/ZapoStoreFactoryCore';
 import { NotImplementedByEngineError } from '@waha/core/exceptions';
+import { extractBody } from '@waha/core/engines/noweb/session.noweb.core';
+import { extractMediaContent } from '@waha/core/engines/noweb/utils';
 import { createAgentProxy } from '@waha/core/helpers.proxy';
+import { IMediaEngineProcessor } from '@waha/core/media/IMediaEngineProcessor';
 import { QR } from '@waha/core/QR';
+import { SerializeMessageKey } from '@waha/core/utils/ids';
 import { toCusFormat, toJID } from '@waha/core/utils/jids';
 import { PairingCodeResponse } from '@waha/structures/auth.dto';
 import {
@@ -31,13 +35,16 @@ import {
   WAHAEngine,
   WAHAEvents,
   WAHASessionStatus,
+  WAMessageAck,
 } from '@waha/structures/enums.dto';
 import { BinaryFile, RemoteFile } from '@waha/structures/files.dto';
 import { WAMessage } from '@waha/structures/responses.dto';
 import type { Agent } from 'https';
 import { Subject } from 'rxjs';
+import { filter, map, mergeMap } from 'rxjs/operators';
 import {
   WaClient,
+  WaIncomingMessageEvent,
   WaMessagePublishResult,
   WaSendMessageContent,
   WaStore,
@@ -83,6 +90,26 @@ interface EngineEvent {
  */
 const MEDIA_PROCESSOR = createMediaProcessor();
 
+/** zapo receipt statuses mapped onto WAHA's numeric ack ladder. */
+const ZAPO_RECEIPT_TO_ACK = {
+  error: WAMessageAck.ERROR,
+  pending: WAMessageAck.PENDING,
+  server: WAMessageAck.SERVER,
+  delivery: WAMessageAck.DEVICE,
+  read: WAMessageAck.READ,
+  'read-self': WAMessageAck.READ,
+  played: WAMessageAck.PLAYED,
+};
+
+function buildMessageId(key: any): string {
+  return SerializeMessageKey({
+    id: key.id,
+    fromMe: key.fromMe,
+    remoteJid: key.remoteJid,
+    participant: key.participant,
+  });
+}
+
 export class WhatsappSessionZapoCore extends WhatsappSession {
   engine = WAHAEngine.ZAPO;
 
@@ -92,12 +119,16 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   private store: WaStore;
   private qr: QR;
   private all$: Subject<EngineEvent>;
+  private incoming$: Subject<WaIncomingMessageEvent>;
+  private receipts$: Subject<any>;
   private unsubscribes: Array<() => void>;
 
   public constructor(config) {
     super(config);
     this.qr = new QR();
     this.all$ = new Subject<EngineEvent>();
+    this.incoming$ = new Subject<WaIncomingMessageEvent>();
+    this.receipts$ = new Subject<any>();
     this.unsubscribes = [];
   }
 
@@ -187,6 +218,9 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       }
     });
 
+    this.on('message', (event) => this.incoming$.next(event));
+    this.on('receipt', (event) => this.receipts$.next(event));
+
     for (const name of FORWARDED_EVENTS) {
       this.on(name, (data) => {
         this.all$.next({ event: name, data: data });
@@ -202,7 +236,103 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   }
 
   subscribeEngineEvents2() {
-    this.events2.get(WAHAEvents.ENGINE_EVENT).switch(this.all$.asObservable());
+    const all$ = this.all$.asObservable();
+    this.events2.get(WAHAEvents.ENGINE_EVENT).switch(all$);
+
+    const incoming$ = this.incoming$.asObservable();
+
+    // 'message' carries what the user received, 'message.any' carries both
+    // directions, matching how the other engines split the two streams.
+    const messages$ = incoming$.pipe(
+      mergeMap((event) => this.processIncomingMessage(event)),
+      filter(Boolean),
+    );
+    this.events2
+      .get(WAHAEvents.MESSAGE)
+      .switch(messages$.pipe(filter((message) => !message.fromMe)));
+    this.events2.get(WAHAEvents.MESSAGE_ANY).switch(messages$);
+
+    const acks$ = this.receipts$
+      .asObservable()
+      .pipe(map((event) => this.toMessageAck(event)));
+    this.events2.get(WAHAEvents.MESSAGE_ACK).switch(acks$);
+  }
+
+  /**
+   * Converts an incoming message and downloads its media, mirroring how the
+   * other engines shape the webhook payload.
+   */
+  protected async processIncomingMessage(
+    event: WaIncomingMessageEvent,
+    downloadMedia = true,
+  ): Promise<WAMessage | null> {
+    const message = this.toWAMessage(event);
+    if (!message) {
+      return null;
+    }
+    if (downloadMedia) {
+      message.media = await this.downloadMediaSafe(event);
+    }
+    return message;
+  }
+
+  private toWAMessage(event: WaIncomingMessageEvent): WAMessage | null {
+    const key = event.key;
+    if (!key?.remoteJid) {
+      return null;
+    }
+    const chatId = toCusFormat(key.remoteJid);
+    const me = this.getSessionMeInfo();
+    const body = extractBody(event.message) ?? '';
+    return {
+      id: buildMessageId(key),
+      timestamp: event.timestampSeconds ?? Math.floor(Date.now() / 1000),
+      from: chatId,
+      fromMe: Boolean(key.fromMe),
+      // In groups the sender is the participant; in 1:1 it is the chat itself.
+      participant: key.participant ? toCusFormat(key.participant) : undefined,
+      to: key.fromMe ? chatId : me?.id ?? '',
+      body: body,
+      hasMedia: Boolean(extractMediaContent(event.message)),
+      ack: WAMessageAck.SERVER,
+      ackName: 'SERVER',
+      replyTo: undefined,
+      _data: event,
+    } as WAMessage;
+  }
+
+  private toMessageAck(event: any) {
+    const ids: string[] = event.ids ?? [event.id];
+    const ack = ZAPO_RECEIPT_TO_ACK[event.status] ?? WAMessageAck.SERVER;
+    return {
+      id: ids[0],
+      from: toCusFormat(event.chatJid ?? event.from ?? ''),
+      participant: event.participant
+        ? toCusFormat(event.participant)
+        : undefined,
+      fromMe: true,
+      ack: ack,
+      ackName: WAMessageAck[ack],
+      _data: event,
+    };
+  }
+
+  private async downloadMediaSafe(event: WaIncomingMessageEvent) {
+    try {
+      const processor = new ZapoEngineMediaProcessor(this);
+      return await this.mediaManager.processMedia(processor, event, this.name);
+    } catch (error) {
+      this.logger.error('Failed when tried to download media for a message');
+      this.logger.error(error, error.stack);
+      return null;
+    }
+  }
+
+  /** Raw bytes for the media manager; the library decrypts and verifies. */
+  public downloadMediaBytes(
+    event: WaIncomingMessageEvent,
+  ): Promise<Uint8Array> {
+    return this.client.message.downloadBytes(event);
   }
 
   async stop(): Promise<void> {
@@ -272,7 +402,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       { type: 'text', text: request.text },
       { mentions: this.toMentionJids(request.mentions) },
     );
-    return this.toWAMessage(chatId, result);
+    return this.toSentMessage(chatId, result);
   }
 
   @Activity()
@@ -283,7 +413,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       { type: 'text', text: request.text },
       { quote: this.toQuoteRef(request.reply_to) },
     );
-    return this.toWAMessage(chatId, result);
+    return this.toSentMessage(chatId, result);
   }
 
   @Activity()
@@ -296,7 +426,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
         name: request.title,
       },
     });
-    return this.toWAMessage(chatId, result);
+    return this.toSentMessage(chatId, result);
   }
 
   @Activity()
@@ -406,7 +536,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     const result = await this.client.message.send(jid, content, {
       mentions: this.toMentionJids(mentions),
     });
-    return this.toWAMessage(jid, result);
+    return this.toSentMessage(jid, result);
   }
 
   /**
@@ -446,12 +576,54 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     return { id: replyTo };
   }
 
-  private toWAMessage(chatId: string, result: WaMessagePublishResult): any {
+  private toSentMessage(chatId: string, result: WaMessagePublishResult): any {
     return {
       id: result?.id,
       to: toCusFormat(chatId),
       fromMe: true,
       timestamp: Math.floor(Date.now() / 1000),
     };
+  }
+}
+
+/**
+ * Feeds WAHA's media manager from an incoming zapo message: the library keeps
+ * the decryption keys on the event, so the whole event is the download handle.
+ */
+export class ZapoEngineMediaProcessor
+  implements IMediaEngineProcessor<WaIncomingMessageEvent>
+{
+  constructor(public session: WhatsappSessionZapoCore) {}
+
+  hasMedia(message: WaIncomingMessageEvent): boolean {
+    return Boolean(extractMediaContent(message.message));
+  }
+
+  getFilename(message: WaIncomingMessageEvent): string | null {
+    const content: any = extractMediaContent(message.message);
+    return content?.fileName ?? null;
+  }
+
+  getMimetype(message: WaIncomingMessageEvent): string {
+    const content: any = extractMediaContent(message.message);
+    return content?.mimetype;
+  }
+
+  getMessageId(message: WaIncomingMessageEvent): string {
+    return message.key.id;
+  }
+
+  getChatId(message: WaIncomingMessageEvent): string {
+    return toCusFormat(message.key.remoteJid);
+  }
+
+  async getMediaBuffer(
+    message: WaIncomingMessageEvent,
+  ): Promise<Buffer | null> {
+    const bytes = await this.session.downloadMediaBytes(message);
+    if (!bytes) {
+      return null;
+    }
+    return Buffer.from(bytes);
   }
 }
