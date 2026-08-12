@@ -1,4 +1,5 @@
 import { UnprocessableEntityException } from '@nestjs/common';
+import { createMediaProcessor } from '@zapo-js/media-utils';
 import { WhatsappSession } from '@waha/core/abc/session.abc';
 import { ZapoEngineLogger } from '@waha/core/engines/zapo/ZapoEngineLogger';
 import { ZapoStoreFactoryCore } from '@waha/core/engines/zapo/store/ZapoStoreFactoryCore';
@@ -17,6 +18,7 @@ import {
   MessageReactionRequest,
   MessageReplyRequest,
   MessageTextRequest,
+  MessageVideoRequest,
   MessageVoiceRequest,
   SendSeenRequest,
   WANumberExistResult,
@@ -30,10 +32,16 @@ import {
   WAHAEvents,
   WAHASessionStatus,
 } from '@waha/structures/enums.dto';
+import { BinaryFile, RemoteFile } from '@waha/structures/files.dto';
 import { WAMessage } from '@waha/structures/responses.dto';
 import type { Agent } from 'https';
 import { Subject } from 'rxjs';
-import { WaClient, WaIncomingMessageEvent, WaStore } from 'zapo-js';
+import {
+  WaClient,
+  WaMessagePublishResult,
+  WaSendMessageContent,
+  WaStore,
+} from 'zapo-js';
 
 import { Activity } from '../../abc/activity';
 
@@ -65,6 +73,15 @@ interface EngineEvent {
   event: string;
   data: any;
 }
+
+/**
+ * Thumbnails, audio probing, waveform extraction and voice-note normalization.
+ * Backed by sharp and ffmpeg, both already present in the WAHA image. The
+ * processor is stateless and documented as safe to share, so one instance
+ * serves every session - each call still logs through its own session logger.
+ * Missing ffmpeg is non-fatal: the affected step is skipped with a warning.
+ */
+const MEDIA_PROCESSOR = createMediaProcessor();
 
 export class WhatsappSessionZapoCore extends WhatsappSession {
   engine = WAHAEngine.ZAPO;
@@ -104,6 +121,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
         store: this.store,
         sessionId: this.name,
         proxy: this.buildProxyOptions(),
+        media: { processor: MEDIA_PROCESSOR },
       },
       engineLogger,
     );
@@ -252,7 +270,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     const result = await this.client.message.send(
       chatId,
       { type: 'text', text: request.text },
-      { mentions: request.mentions, quote: undefined },
+      { mentions: this.toMentionJids(request.mentions) },
     );
     return this.toWAMessage(chatId, result);
   }
@@ -329,16 +347,96 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     return result?.url ?? null;
   }
 
-  sendImage(request: MessageImageRequest) {
-    throw new NotImplementedByEngineError();
+  @Activity()
+  async sendImage(request: MessageImageRequest) {
+    return this.sendMedia(
+      request.chatId,
+      {
+        type: 'image',
+        ...(await this.fileToMedia(request.file)),
+        caption: request.caption,
+      },
+      request.mentions,
+    );
   }
 
-  sendFile(request: MessageFileRequest) {
-    throw new NotImplementedByEngineError();
+  @Activity()
+  async sendFile(request: MessageFileRequest) {
+    return this.sendMedia(
+      request.chatId,
+      {
+        type: 'document',
+        ...(await this.fileToMedia(request.file)),
+        caption: request.caption,
+      },
+      request.mentions,
+    );
   }
 
-  sendVoice(request: MessageVoiceRequest) {
-    throw new NotImplementedByEngineError();
+  @Activity()
+  async sendVideo(request: MessageVideoRequest) {
+    // asNote maps to WhatsApp's push-to-video (round video) message type.
+    const content: WaSendMessageContent = request.asNote
+      ? { type: 'ptv', ...(await this.fileToMedia(request.file)) }
+      : {
+          type: 'video',
+          ...(await this.fileToMedia(request.file)),
+          caption: request.caption,
+        };
+    return this.sendMedia(request.chatId, content, request.mentions);
+  }
+
+  @Activity()
+  async sendVoice(request: MessageVoiceRequest) {
+    // ptt marks it as a voice note; the media processor normalizes the codec
+    // and computes the waveform when ffmpeg is available.
+    return this.sendMedia(request.chatId, {
+      type: 'audio',
+      ...(await this.fileToMedia(request.file)),
+      ptt: true,
+    });
+  }
+
+  private async sendMedia(
+    chatId: string,
+    content: WaSendMessageContent,
+    mentions?: string[],
+  ) {
+    const jid = toJID(chatId);
+    const result = await this.client.message.send(jid, content, {
+      mentions: this.toMentionJids(mentions),
+    });
+    return this.toWAMessage(jid, result);
+  }
+
+  /**
+   * Turns a WAHA file payload into the media fields zapo's send builder takes.
+   * A remote URL is downloaded here rather than handed over as a string: the
+   * library would treat a string as a local path.
+   */
+  private async fileToMedia(file: RemoteFile | BinaryFile) {
+    let content: Buffer;
+    if ('url' in file) {
+      content = await this.fetch(file.url);
+    } else if ('data' in file) {
+      content = Buffer.from(file.data, 'base64');
+    } else {
+      throw new UnprocessableEntityException(
+        'Either "file.url" or "file.data" must be specified.',
+      );
+    }
+    return {
+      media: content,
+      mimetype: file.mimetype,
+      fileName: file.filename,
+    };
+  }
+
+  private toMentionJids(mentions?: string[]) {
+    if (!mentions?.length) {
+      return undefined;
+    }
+    return mentions.map((mention) => toJID(mention));
   }
 
   private toQuoteRef(replyTo?: string) {
@@ -348,7 +446,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     return { id: replyTo };
   }
 
-  private toWAMessage(chatId: string, result: any): any {
+  private toWAMessage(chatId: string, result: WaMessagePublishResult): any {
     return {
       id: result?.id,
       to: toCusFormat(chatId),
