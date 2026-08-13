@@ -1,4 +1,4 @@
-import { createDecipheriv, createHash, hkdfSync } from 'crypto';
+import { aesGcmDecrypt, hkdf, sha256 } from 'zapo-js/crypto';
 
 /**
  * Decryption of the encrypted addons the library leaves undecrypted.
@@ -20,14 +20,10 @@ import { createDecipheriv, createHash, hkdfSync } from 'crypto';
  * The derivation itself matches the library's byte for byte - HKDF-SHA256 over
  * the same four fields, in the same order - so only the identities differ.
  *
- * The library exports `hkdf`, `aesGcmDecrypt` and `sha256` from its `crypto`
- * subpath, which would be the natural thing to call here. This project sets
- * `module: commonjs` without a moduleResolution that reads a package's
- * exports map, so that subpath does not resolve - and changing it is a
- * repository-wide decision, not one for this file. What follows therefore
- * mirrors those three exactly: their `hkdf` is `hkdfSync('sha256', ikm, salt
- * ?? empty, info, len)`, and their `aesGcmDecrypt` reads the tag off the
- * trailer of the ciphertext, which is how WhatsApp ships it.
+ * The primitives come from the library's own `crypto` subpath, so the key
+ * this derives and the tag it checks cannot drift from the ones the library
+ * derives and checks on its own path. See zapo-subpaths.d.ts for how that
+ * import type-checks here.
  */
 
 /** The labels that go into the derivation, as whatsmeow names them. */
@@ -35,8 +31,6 @@ export const MESSAGE_EDIT_MODIFICATION_TYPE = 'Message Edit';
 export const POLL_VOTE_MODIFICATION_TYPE = 'Poll Vote';
 
 const DERIVED_KEY_BYTES = 32;
-const GCM_TAG_BYTES = 16;
-const EMPTY_SALT = Buffer.alloc(0);
 
 /**
  * Who authored a message key. `fromMe` means this account, which is the branch
@@ -145,42 +139,26 @@ export function deriveAddonKey(
   parentSender: string,
   modificationSender: string,
   modificationType: string,
-): Buffer {
+): Uint8Array {
   const info = Buffer.from(
     stanzaId + parentSender + modificationSender + modificationType,
   );
-  return Buffer.from(
-    hkdfSync('sha256', secret, EMPTY_SALT, info, DERIVED_KEY_BYTES),
-  );
+  return hkdf(secret, null, info, DERIVED_KEY_BYTES);
 }
 
 /**
- * The tag is the trailer of the ciphertext, the way WhatsApp ships it. A tag
- * mismatch is the expected outcome of a wrong key, so it answers null.
- *
- * `Message Edit` carries no additional data: whatsmeow only builds it for
- * `Poll Vote` and `Event Response`.
+ * A tag mismatch is the expected outcome of a wrong key rather than an error,
+ * so it answers null. The library's primitive reads the tag off the trailer of
+ * the ciphertext, which is how WhatsApp ships it.
  */
 function gcmDecrypt(
-  key: Buffer,
+  key: Uint8Array,
   iv: Uint8Array,
   ciphertext: Uint8Array,
   additionalData?: Uint8Array,
 ): Buffer | null {
-  if (ciphertext.length <= GCM_TAG_BYTES) {
-    return null;
-  }
-  const tagOffset = ciphertext.length - GCM_TAG_BYTES;
   try {
-    const decipher = createDecipheriv('aes-256-gcm', key, iv);
-    if (additionalData?.length) {
-      decipher.setAAD(additionalData);
-    }
-    decipher.setAuthTag(ciphertext.subarray(tagOffset));
-    return Buffer.concat([
-      decipher.update(ciphertext.subarray(0, tagOffset)),
-      decipher.final(),
-    ]);
+    return Buffer.from(aesGcmDecrypt(key, iv, ciphertext, additionalData));
   } catch {
     return null;
   }
@@ -212,12 +190,12 @@ export function toSelectedOptionNames(
   const byHash = new Map<string, string>();
   for (const name of optionNames) {
     if (name) {
-      byHash.set(createHash('sha256').update(name).digest('hex'), name);
+      byHash.set(toHex(sha256(Buffer.from(name))), name);
     }
   }
   const names: string[] = [];
   for (const option of selectedOptions) {
-    const name = byHash.get(Buffer.from(option).toString('hex'));
+    const name = byHash.get(toHex(option));
     if (!name) {
       return null;
     }
@@ -237,4 +215,9 @@ export function toNonAdJid(jid: string): string {
   }
   const [user, server] = jid.split('@');
   return server ? `${user.split(':')[0]}@${server}` : jid;
+}
+
+/** Hex, for comparing an option hash with the ones the poll produces. */
+function toHex(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString('hex');
 }
