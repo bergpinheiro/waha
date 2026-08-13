@@ -48,10 +48,12 @@ import { PaginationParams } from '@waha/structures/pagination.dto';
 import {
   SECOND,
   WAHAEngine,
+  WAHAPresenceStatus,
   WAHAEvents,
   WAHASessionStatus,
   WAMessageAck,
 } from '@waha/structures/enums.dto';
+import { ContactQuery, ContactRequest } from '@waha/structures/contacts.dto';
 import { BinaryFile, RemoteFile } from '@waha/structures/files.dto';
 import { WAMessage } from '@waha/structures/responses.dto';
 import type { Agent } from 'https';
@@ -61,6 +63,7 @@ import {
   WaClient,
   WaIncomingMessageEvent,
   WaMessageKey,
+  WaStoredContactRecord,
   WaStoredMessageRecord,
   WaStoredThreadRecord,
   WaMessagePublishResult,
@@ -107,6 +110,13 @@ interface EngineEvent {
  * Missing ffmpeg is non-fatal: the affected step is skipped with a warning.
  */
 const MEDIA_PROCESSOR = createMediaProcessor();
+
+/** Chat-scoped presences map onto chatstates; the rest are account-wide. */
+const WAHA_PRESENCE_TO_CHATSTATE = {
+  [WAHAPresenceStatus.TYPING]: 'composing',
+  [WAHAPresenceStatus.RECORDING]: 'recording',
+  [WAHAPresenceStatus.PAUSED]: 'paused',
+};
 
 /** zapo receipt statuses mapped onto WAHA's numeric ack ladder. */
 const ZAPO_RECEIPT_TO_ACK = {
@@ -794,6 +804,118 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     request: ReadChatMessagesQuery,
   ): Promise<ReadChatMessagesResponse> {
     return this.readChatMessagesWSImpl(chatId, request);
+  }
+
+  @Activity()
+  async setProfileName(name: string): Promise<boolean> {
+    await this.client.profile.setPushName(name);
+    return true;
+  }
+
+  @Activity()
+  async setProfileStatus(status: string): Promise<boolean> {
+    await this.client.profile.setStatus(status);
+    return true;
+  }
+
+  @Activity()
+  async updateProfilePicture(
+    file: BinaryFile | RemoteFile | null,
+  ): Promise<boolean> {
+    if (!file) {
+      await this.client.profile.deleteProfilePicture();
+      return true;
+    }
+    // The library uploads the bytes as-is, so the caller must send a picture
+    // WhatsApp accepts (square JPEG) - there is no transcoding step.
+    const media = await this.fileToMedia(file);
+    await this.client.profile.setProfilePicture(media.media);
+    return true;
+  }
+
+  /**
+   * The contact store is keyed lookup only - it has getByJid and
+   * getByPhoneNumber but no enumeration - so there is nothing to list from.
+   * Fetching every contact would mean a full usync sweep, which is a
+   * different operation from reading local state.
+   */
+  getContacts(pagination: PaginationParams) {
+    throw new NotImplementedByEngineError();
+  }
+
+  @Activity()
+  async getContact(query: ContactQuery) {
+    const jid = toJID(query.contactId);
+    const stored = await this.store.session(this.name).contacts.getByJid(jid);
+    if (stored) {
+      return this.toContact(stored);
+    }
+    const [profile] = await this.client.profile.getProfiles([jid]);
+    if (!profile) {
+      return null;
+    }
+    return {
+      id: toCusFormat(profile.jid),
+      name: null,
+      pushname: null,
+    };
+  }
+
+  @Activity()
+  async getContactAbout(query: ContactQuery): Promise<{ about: string }> {
+    const about = await this.client.profile.getAboutStatus(
+      toJID(query.contactId),
+    );
+    return { about: about };
+  }
+
+  @Activity()
+  async blockContact(request: ContactRequest) {
+    await this.client.privacy.blockUser(toJID(request.contactId));
+  }
+
+  @Activity()
+  async unblockContact(request: ContactRequest) {
+    await this.client.privacy.unblockUser(toJID(request.contactId));
+  }
+
+  @Activity()
+  async setPresence(
+    presence: WAHAPresenceStatus,
+    chatId?: string,
+  ): Promise<void> {
+    // Global availability and per-chat typing are different stanzas: with a
+    // chatId it is a chatstate, without one it is the account presence.
+    if (chatId) {
+      const state = WAHA_PRESENCE_TO_CHATSTATE[presence];
+      if (!state) {
+        throw new UnprocessableEntityException(
+          `Presence '${presence}' is not a chat presence.`,
+        );
+      }
+      await this.client.presence.sendChatstate(toJID(chatId), { state: state });
+      return;
+    }
+    const type =
+      presence === WAHAPresenceStatus.ONLINE ? 'available' : 'unavailable';
+    await this.client.presence.send(type);
+  }
+
+  @Activity()
+  async subscribePresence(id: string): Promise<any> {
+    await this.client.presence.subscribe(toJID(id));
+  }
+
+  private toContact(contact: WaStoredContactRecord) {
+    return {
+      id: toCusFormat(contact.jid),
+      name: contact.displayName ?? null,
+      pushname: contact.pushName ?? null,
+      // The store cross-indexes both identities, which the other engines have
+      // to resolve with an extra query.
+      lid: contact.lid ?? null,
+      number: contact.phoneNumber ?? null,
+    };
   }
 
   @Activity()
