@@ -205,6 +205,12 @@ interface EngineEvent {
  */
 const MEDIA_PROCESSOR = createMediaProcessor();
 
+/**
+ * Generous enough for a large file on a slow link, short enough that a stalled
+ * transfer does not hold a request open indefinitely.
+ */
+const MEDIA_DOWNLOAD_TIMEOUT = 5 * 60 * SECOND;
+
 /** The chat every status lives in. */
 const STATUS_BROADCAST_JID = 'status@broadcast';
 
@@ -320,7 +326,15 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
         store: this.storage.store,
         sessionId: this.name,
         proxy: this.buildProxyOptions(),
-        media: { processor: MEDIA_PROCESSOR },
+        media: {
+          processor: MEDIA_PROCESSOR,
+          // Thumbnails, probing and waveforms are on unless turned off, but
+          // voice-note normalisation has to be asked for. Without it a voice
+          // note goes out in whatever the caller uploaded, and WhatsApp only
+          // renders one reliably as Opus in an Ogg container - the processor
+          // re-encodes to that.
+          normalizeVoiceNote: true,
+        },
         // A reaction is an encrypted addon keyed by its parent's secret, and
         // the library only keeps that secret for messages it expects a
         // follow-up on - polls and events. Without this, reacting to an
@@ -1497,11 +1511,20 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     }
   }
 
-  /** Raw bytes for the media manager; the library decrypts and verifies. */
+  /**
+   * Raw bytes for the media manager; the library decrypts and verifies.
+   *
+   * Bounded in time, so a download that stalls fails instead of holding the
+   * request open forever. It is deliberately not bounded in size: the other
+   * engines buffer whatever arrives, and capping only this one would make a
+   * file that works on NOWEB fail here.
+   */
   public downloadMediaBytes(
     event: WaIncomingMessageEvent,
   ): Promise<Uint8Array> {
-    return this.client.message.downloadBytes(event);
+    return this.client.message.downloadBytes(event, {
+      timeoutMs: MEDIA_DOWNLOAD_TIMEOUT,
+    });
   }
 
   async stop(): Promise<void> {
