@@ -13,6 +13,9 @@ interface LoggerChildOptions {
  * context second - while pino takes the object first. The order is swapped
  * here so engine logs keep the same shape as the rest of WAHA.
  */
+/** The library's wording, matched exactly so a reworded one is not swallowed. */
+const ADDON_DECRYPT_FAILED = 'addon auto-decrypt failed';
+
 export class ZapoEngineLogger implements ZapoLogger {
   constructor(private readonly logger: Logger) {}
 
@@ -40,6 +43,15 @@ export class ZapoEngineLogger implements ZapoLogger {
   }
 
   warn(message: string, context?: Readonly<Record<string, unknown>>): void {
+    if (message === ADDON_DECRYPT_FAILED) {
+      // Expected on every edit made on this account's phone: the library
+      // derives the addon key from the chat rather than from the author, so
+      // an addon of ours never authenticates on its path. The engine decrypts
+      // that case itself and warns on its own when it cannot, so raising this
+      // one would report a failure that did not happen.
+      this.logger.debug(context ?? {}, message);
+      return;
+    }
     this.logger.warn(context ?? {}, message);
   }
 

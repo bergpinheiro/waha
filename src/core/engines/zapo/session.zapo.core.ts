@@ -7,6 +7,11 @@ import {
 } from '@waha/core/abc/session.abc';
 import { ZapoEngineLogger } from '@waha/core/engines/zapo/ZapoEngineLogger';
 import {
+  decryptAddon,
+  keyAuthor,
+  MESSAGE_EDIT_MODIFICATION_TYPE,
+} from '@waha/core/engines/zapo/addon-crypto';
+import {
   buildMessageId,
   hasDedicatedEvent,
   hexColorToArgb,
@@ -129,6 +134,7 @@ import {
   WaMessagePublishResult,
   WaSendMessageContent,
   WaStore,
+  unwrapMessage,
 } from 'zapo-js';
 
 import { Activity } from '../../abc/activity';
@@ -510,13 +516,19 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
         responseFailed$.pipe(map((event) => this.toEventResponse(event))),
       );
 
-    this.events2.get(WAHAEvents.MESSAGE_EDITED).switch(
-      addons$.pipe(
-        filter((event) => event.kind === 'message_edit'),
-        map((event) => this.toMessageEdited(event)),
-        filter(Boolean),
-      ),
+    // An edit reaches us two ways, split by direction so neither can double
+    // up. Theirs the library decrypts; ours it cannot - see decryptOwnEdit.
+    const theirEdits$ = addons$.pipe(
+      filter((event) => event.kind === 'message_edit' && !event.key?.fromMe),
+      map((event) => this.toMessageEdited(event)),
     );
+    const ourEdits$ = incoming$.pipe(
+      filter((event) => Boolean(event.key?.fromMe)),
+      mergeMap((event) => this.decryptOwnEdit(event)),
+    );
+    this.events2
+      .get(WAHAEvents.MESSAGE_EDITED)
+      .switch(merge(theirEdits$, ourEdits$).pipe(filter(Boolean)));
 
     this.events2
       .get(WAHAEvents.PRESENCE_UPDATE)
@@ -875,6 +887,75 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       },
       _data: this.toPlainData(event),
     };
+  }
+
+  /**
+   * Decrypts an edit made on this account's phone, which the library hands
+   * over still encrypted.
+   *
+   * It derives the addon key from `key.participant ?? key.remoteJid`, so for
+   * an addon of ours in a 1:1 chat it uses the contact's jid where the author
+   * is us, and the payload fails to authenticate. Both Baileys and whatsmeow
+   * special-case `fromMe` here; see addon-crypto for the two references.
+   *
+   * Returns null whenever this is not that case, so an ordinary message walks
+   * straight through.
+   */
+  private async decryptOwnEdit(event: any): Promise<any | null> {
+    const envelope: any = unwrapMessage(event.message)?.secretEncryptedMessage;
+    const targetId = envelope?.targetMessageKey?.id;
+    if (
+      !targetId ||
+      !envelope.encPayload ||
+      !envelope.encIv ||
+      envelope.secretEncType !==
+        proto.Message.SecretEncryptedMessage.SecretEncType.MESSAGE_EDIT
+    ) {
+      return null;
+    }
+
+    const entry = await this.storage.store
+      .session(this.name)
+      .messageSecret.get(targetId)
+      .catch(() => null);
+    if (!entry?.secret) {
+      return null;
+    }
+
+    const me = this.getSessionMeInfo();
+    // An account being migrated to lid reports either identity depending on
+    // the stanza, and the secret was stored under whichever one arrived
+    // first, so every form this account answers to is a candidate.
+    const ours = [me?.lid, me?.jid ? normalizeJid(me.jid) : null].filter(
+      Boolean,
+    );
+    const author = keyAuthor(event.key, ours[0] as string);
+    const plaintext = decryptAddon({
+      secret: entry.secret,
+      stanzaId: targetId,
+      modificationSender: author,
+      parentSenders: [...ours, entry.senderJid],
+      modificationType: MESSAGE_EDIT_MODIFICATION_TYPE,
+      iv: envelope.encIv,
+      ciphertext: envelope.encPayload,
+    });
+    if (!plaintext) {
+      this.logger.warn(
+        { targetId: targetId },
+        'could not decrypt an edit made on this account',
+      );
+      return null;
+    }
+
+    return this.toMessageEdited({
+      key: event.key,
+      timestampSeconds: event.timestampSeconds,
+      targetMessageId: targetId,
+      decrypted: {
+        kind: 'message_edit',
+        message: proto.Message.decode(plaintext),
+      },
+    });
   }
 
   private toMessageEdited(event: any) {
