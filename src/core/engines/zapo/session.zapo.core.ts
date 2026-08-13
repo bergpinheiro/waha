@@ -32,6 +32,7 @@ import {
 } from '@waha/core/utils/ids';
 import {
   isJidGroup,
+  isJidNewsletter,
   isLidUser,
   normalizeJid,
   toCusFormat,
@@ -95,7 +96,7 @@ import { ContactQuery, ContactRequest } from '@waha/structures/contacts.dto';
 import { BinaryFile, RemoteFile } from '@waha/structures/files.dto';
 import { WAMessage } from '@waha/structures/responses.dto';
 import type { Agent } from 'https';
-import { Subject } from 'rxjs';
+import { merge, Subject } from 'rxjs';
 import { filter, map, mergeMap } from 'rxjs/operators';
 import {
   WaClient,
@@ -152,6 +153,9 @@ interface EngineEvent {
  */
 const MEDIA_PROCESSOR = createMediaProcessor();
 
+/** Upper bound for the one-off backfill of the chat index. */
+const CHAT_INDEX_SEED_MAX = 1000;
+
 export class WhatsappSessionZapoCore extends WhatsappSession {
   engine = WAHAEngine.ZAPO;
 
@@ -162,6 +166,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   private qr: QR;
   private all$: Subject<EngineEvent>;
   private incoming$: Subject<WaIncomingMessageEvent>;
+  private outgoing$: Subject<any>;
   private receipts$: Subject<any>;
   private unsubscribes: Array<() => void>;
 
@@ -170,6 +175,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     this.qr = new QR();
     this.all$ = new Subject<EngineEvent>();
     this.incoming$ = new Subject<WaIncomingMessageEvent>();
+    this.outgoing$ = new Subject<any>();
     this.receipts$ = new Subject<any>();
     this.unsubscribes = [];
   }
@@ -188,7 +194,8 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       this.sessionStore,
       this.name,
     );
-    // Creates the contacts table before the library starts writing to it.
+    // Creates the WAHA-side tables before anything writes to them.
+    await this.storage.chats.init();
     await this.storage.contacts.init();
     const engineLogger = new ZapoEngineLogger(
       this.loggerBuilder.child({ name: 'ZapoEngine' }) as any,
@@ -206,6 +213,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
 
     this.subscribeEngineEvents();
     this.subscribeEngineEvents2();
+    void this.seedChatIndex();
 
     // connect() stays pending until the user scans the QR, so it is not
     // awaited here - auth_qr and auth_paired drive the status instead.
@@ -266,7 +274,19 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       }
     });
 
-    this.on('message', (event) => this.incoming$.next(event));
+    this.on('message', (event) => {
+      this.incoming$.next(event);
+      void this.rememberPushName(event);
+      void this.touchChat(
+        event.key?.remoteJid,
+        (event.timestampSeconds ?? 0) * SECOND || Date.now(),
+      );
+    });
+    this.on('message_send', (event) => {
+      this.outgoing$.next(event);
+      void this.persistOutgoing(event);
+      void this.touchChat(event.to, Date.now());
+    });
     this.on('receipt', (event) => this.receipts$.next(event));
 
     for (const name of FORWARDED_EVENTS) {
@@ -298,7 +318,15 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     this.events2
       .get(WAHAEvents.MESSAGE)
       .switch(messages$.pipe(filter((message) => !message.fromMe)));
-    this.events2.get(WAHAEvents.MESSAGE_ANY).switch(messages$);
+    // 'message.any' carries both directions, so what this device sends has to
+    // reach it too. The outgoing event carries no key, only the destination
+    // and the stanza id, so the payload is built from those.
+    const outgoing$ = this.outgoing$
+      .asObservable()
+      .pipe(map((event) => this.toOutgoingWAMessage(event)));
+    this.events2
+      .get(WAHAEvents.MESSAGE_ANY)
+      .switch(merge(messages$, outgoing$));
 
     const acks$ = this.receipts$
       .asObservable()
@@ -349,14 +377,85 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     } as WAMessage;
   }
 
+  /**
+   * The library archives what arrives, not what this device sends, so the
+   * sent side is written here - otherwise a chat reads as one-sided, which
+   * is not what the other engines show.
+   */
+  private async persistOutgoing(event: any) {
+    if (!event?.id || !event?.to) {
+      return;
+    }
+    try {
+      await this.storage.store.session(this.name).messages.upsert({
+        id: event.id,
+        threadJid: event.to,
+        senderJid: this.getSessionMeInfo()?.jid,
+        fromMe: true,
+        timestampMs: Date.now(),
+        messageBytes: event.message
+          ? proto.Message.encode(event.message as any).finish()
+          : undefined,
+      });
+    } catch (error) {
+      this.logger.warn({ error: error }, 'Failed to archive a sent message');
+    }
+  }
+
+  /**
+   * WhatsApp only names group and channel threads, so a 1:1 chat shows the
+   * contact - and for someone not in the address book the push name carried
+   * by the message is the only name there is.
+   */
+  private async rememberPushName(event: WaIncomingMessageEvent) {
+    const jid = event.key?.participant ?? event.key?.remoteJid;
+    if (!event.pushName || !jid || event.key?.fromMe) {
+      return;
+    }
+    try {
+      const known = await this.storage.contacts.getByJid(jid);
+      if (known?.pushName === event.pushName) {
+        return;
+      }
+      await this.storage.contacts.upsert({
+        ...known,
+        jid: jid,
+        pushName: event.pushName,
+        lastUpdatedMs: Date.now(),
+      });
+    } catch (error) {
+      this.logger.warn({ error: error }, 'Failed to store a push name');
+    }
+  }
+
+  private toOutgoingWAMessage(event: any): WAMessage {
+    const chatId = toCusFormat(event.to);
+    return {
+      id: buildMessageId({ id: event.id, fromMe: true, remoteJid: event.to }),
+      timestamp: Math.floor(Date.now() / SECOND),
+      from: chatId,
+      fromMe: true,
+      to: chatId,
+      body: extractBody(event.message) ?? '',
+      hasMedia: Boolean(extractMediaContent(event.message)),
+      ack: WAMessageAck.PENDING,
+      ackName: WAMessageAck[WAMessageAck.PENDING],
+      _data: event,
+    } as WAMessage;
+  }
+
   private toMessageAck(event: any) {
-    const ids: string[] = event.ids ?? [event.id];
+    const ids: string[] = event.messageIds ?? [];
     const ack = ZAPO_RECEIPT_TO_ACK[event.status] ?? WAMessageAck.SERVER;
+    // The receipt names the chat and, in groups, the participant. Falling back
+    // to the recipient keeps a 1:1 ack addressed by the chat rather than by
+    // the device that acked it.
+    const chatJid = event.chatJid ?? event.recipientJid;
     return {
       id: ids[0],
-      from: toCusFormat(event.chatJid ?? event.from ?? ''),
-      participant: event.participant
-        ? toCusFormat(event.participant)
+      from: toCusFormat(chatJid ?? ''),
+      participant: event.participantJid
+        ? toCusFormat(event.participantJid)
         : undefined,
       fromMe: true,
       ack: ack,
@@ -707,11 +806,22 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
    * Chats and messages are read from the store the library fills as the
    * session runs, so they only cover what this session has seen.
    */
+  /**
+   * Ordered by the last activity, which is what a chat list means. The
+   * library's thread store lists without an order, so the order is kept in
+   * WAHA's own index and the thread record is merged in for its flags.
+   */
   async getChats(pagination: PaginationParams) {
-    const threads = await this.storage.store
-      .session(this.name)
-      .threads.list(pagination?.limit);
-    return threads.map((thread) => this.toChatSummary(thread));
+    const indexed = await this.storage.chats.list(pagination?.limit);
+    const threads = this.storage.store.session(this.name).threads;
+    const chats: ChatSummary[] = [];
+    for (const entry of indexed) {
+      const thread = await threads.getByJid(entry.id);
+      chats.push(
+        this.toChatSummary(thread ?? { jid: entry.id, name: entry.name }),
+      );
+    }
+    return chats;
   }
 
   async getChatsOverview(
@@ -724,6 +834,51 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       ? chats.filter((chat) => ids.includes(toJID(chat.id)))
       : chats;
     return Promise.all(selected.map((chat) => this.fetchChatSummary(chat)));
+  }
+
+  /**
+   * Fills the index from what the history sync already wrote, so a session
+   * that existed before this index does not start with an empty chat list.
+   * Runs once - after that the message flow keeps it current.
+   */
+  private async seedChatIndex() {
+    try {
+      const existing = await this.storage.chats.list(1);
+      if (existing.length > 0) {
+        return;
+      }
+      const threads = await this.storage.store
+        .session(this.name)
+        .threads.list(CHAT_INDEX_SEED_MAX);
+      for (const thread of threads) {
+        const last = await this.listThreadRecords(
+          thread.jid,
+          1,
+          undefined,
+          false,
+        );
+        await this.storage.chats.touch(
+          thread.jid,
+          last[0]?.timestampMs ?? 0,
+          thread.name,
+        );
+      }
+      this.logger.info(`Indexed ${threads.length} chats from history`);
+    } catch (error) {
+      this.logger.warn({ error: error }, 'Failed to seed the chat index');
+    }
+  }
+
+  /** Records that a conversation had activity, so the list can be ordered. */
+  private async touchChat(jid: string | undefined, timestampMs: number) {
+    if (!jid) {
+      return;
+    }
+    try {
+      await this.storage.chats.touch(jid, timestampMs);
+    } catch (error) {
+      this.logger.warn({ error: error }, 'Failed to index a chat');
+    }
   }
 
   /**
@@ -756,15 +911,15 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     query: GetChatMessagesQuery,
     filter: GetChatMessagesFilter,
   ): Promise<WAMessage[]> {
-    const records = await this.storage.store
-      .session(this.name)
-      .messages.listByThread(
-        toJID(chatId),
-        query?.limit,
-        filter?.['filter.timestamp.lte']
-          ? filter['filter.timestamp.lte'] * SECOND
-          : undefined,
-      );
+    const before = filter?.['filter.timestamp.lte']
+      ? filter['filter.timestamp.lte'] * SECOND
+      : undefined;
+    const records = await this.listThreadRecords(
+      chatId,
+      query?.limit,
+      before,
+      query?.merge ?? true,
+    );
     const messages: WAMessage[] = [];
     for (const record of records) {
       const message = await this.storedToWAMessage(
@@ -776,6 +931,51 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       }
     }
     return this.applyMessageFilter(messages, filter);
+  }
+
+  /**
+   * A conversation is split across both of its identities: history sync writes
+   * under the phone jid while live messages arrive addressed by @lid, so
+   * reading only the requested one returns a chat frozen in the past. Merging
+   * is what the other engines already do and what `merge` asks for.
+   */
+  private async listThreadRecords(
+    chatId: string,
+    limit: number | undefined,
+    beforeMs: number | undefined,
+    merge: boolean,
+  ): Promise<WaStoredMessageRecord[]> {
+    const store = this.storage.store.session(this.name).messages;
+    const jids = merge ? await this.resolveThreadJids(chatId) : [toJID(chatId)];
+    const pages = await Promise.all(
+      jids.map((jid) => store.listByThread(jid, limit, beforeMs)),
+    );
+    const records = pages.flat();
+    if (jids.length === 1) {
+      return records;
+    }
+    // Both pages come back newest first; merging needs a re-sort and a re-cut.
+    records.sort((a, b) => (b.timestampMs ?? 0) - (a.timestampMs ?? 0));
+    return limit ? records.slice(0, limit) : records;
+  }
+
+  /** The chat jid plus its counterpart identity, when the contact carries one. */
+  private async resolveThreadJids(chatId: string): Promise<string[]> {
+    const jid = toJID(chatId);
+    if (isJidGroup(jid) || isJidNewsletter(jid)) {
+      return [jid];
+    }
+    const contact =
+      (await this.storage.contacts.getByJid(jid)) ??
+      (await this.storage.contacts.getByPhoneNumber(jid));
+    if (!contact) {
+      return [jid];
+    }
+    // The record carries the identity it was addressed by in `jid` and the
+    // other side in `phoneNumber`; the `lid` column is only filled when the
+    // pair arrived that way, so all three are considered.
+    const identities = [contact.jid, contact.lid, contact.phoneNumber];
+    return [...new Set([jid, ...identities.filter(Boolean)])];
   }
 
   async getChatMessage(
@@ -794,9 +994,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   }
 
   private async getLastMessage(chatId: string) {
-    const records = await this.storage.store
-      .session(this.name)
-      .messages.listByThread(toJID(chatId), 1);
+    const records = await this.listThreadRecords(chatId, 1, undefined, true);
     if (!records.length) {
       return null;
     }

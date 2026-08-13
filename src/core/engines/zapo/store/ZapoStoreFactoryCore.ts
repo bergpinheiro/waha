@@ -1,5 +1,11 @@
 import { KNEX_SQLITE_CLIENT } from '@waha/core/env';
 import {
+  buildMongoChatStore,
+  buildPsqlChatStore,
+  buildSqliteChatStore,
+  ZapoChatStore,
+} from '@waha/core/engines/zapo/store/ZapoChatStore';
+import {
   buildMongoContactStore,
   buildPsqlContactStore,
   buildSqliteContactStore,
@@ -100,6 +106,7 @@ const SQLITE_FILE = 'zapo.sqlite3';
 export interface ZapoStorage {
   readonly store: WaStore;
   readonly contacts: ZapoContactStore;
+  readonly chats: ZapoChatStore;
   /** Releases the library backends and any connection opened for this session. */
   close(): Promise<void>;
 }
@@ -147,6 +154,7 @@ export class ZapoStoreFactoryCore {
     return {
       store: waStore,
       contacts: contacts,
+      chats: buildSqliteChatStore(knex),
       close: closeStorage(waStore, knex),
     };
   }
@@ -166,6 +174,7 @@ export class ZapoStoreFactoryCore {
     return {
       store: waStore,
       contacts: contacts,
+      chats: buildPsqlChatStore(knex),
       close: closeStorage(waStore, knex),
     };
   }
@@ -182,6 +191,7 @@ export class ZapoStoreFactoryCore {
     return {
       store: waStore,
       contacts: contacts,
+      chats: buildMongoChatStore(db),
       close: closeStorage(waStore),
     };
   }
