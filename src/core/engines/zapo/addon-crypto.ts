@@ -19,6 +19,15 @@ import { createDecipheriv, createHash, hkdfSync } from 'crypto';
  *
  * The derivation itself matches the library's byte for byte - HKDF-SHA256 over
  * the same four fields, in the same order - so only the identities differ.
+ *
+ * The library exports `hkdf`, `aesGcmDecrypt` and `sha256` from its `crypto`
+ * subpath, which would be the natural thing to call here. This project sets
+ * `module: commonjs` without a moduleResolution that reads a package's
+ * exports map, so that subpath does not resolve - and changing it is a
+ * repository-wide decision, not one for this file. What follows therefore
+ * mirrors those three exactly: their `hkdf` is `hkdfSync('sha256', ikm, salt
+ * ?? empty, info, len)`, and their `aesGcmDecrypt` reads the tag off the
+ * trailer of the ciphertext, which is how WhatsApp ships it.
  */
 
 /** The labels that go into the derivation, as whatsmeow names them. */
