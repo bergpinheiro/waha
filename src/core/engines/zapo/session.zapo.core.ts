@@ -201,6 +201,10 @@ const MEDIA_PROCESSOR = createMediaProcessor();
 /** protocolMessage.type for a revoke, which is what REVOKE maps to. */
 const REVOKE_PROTOCOL_TYPE = 0;
 
+/** protocolMessage.type for an edit, which is what MESSAGE_EDIT maps to. */
+const EDIT_PROTOCOL_TYPE =
+  proto.Message.ProtocolMessage.Type.MESSAGE_EDIT as number;
+
 /**
  * The library reports one group stream with a wide action set; these are the
  * subsets each WAHA group event stands for.
@@ -447,6 +451,10 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     // and the stanza id, so the payload is built from those - and it needs the
     // same filter the incoming side applies, since sending a reaction or an
     // edit emits one of these too.
+    const sent$ = this.outgoing$.asObservable().pipe(
+      map((event) => this.toSelfEvent(event)),
+      share(),
+    );
     const outgoing$ = this.outgoing$
       .asObservable()
       .pipe(
@@ -476,7 +484,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     // encrypted addon when the parent needs one. Both feed the same event -
     // the message form is the one the other protocol engines filter for.
     const reactions$ = merge(
-      incoming$.pipe(
+      merge(incoming$, sent$).pipe(
         filter((event: any) => Boolean(event.message?.reactionMessage)),
         map((event) => this.toMessageReactionFromMessage(event)),
       ),
@@ -526,9 +534,15 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       filter((event) => Boolean(event.key?.fromMe)),
       mergeMap((event) => this.decryptOwnEdit(event)),
     );
+    // An edit sent from here travels as a protocol message, not as an addon,
+    // so it is read straight off the stanza.
+    const sentEdits$ = sent$.pipe(
+      filter((event) => event.protocolMessage?.type === EDIT_PROTOCOL_TYPE),
+      map((event) => this.toMessageEditedFromProtocol(event)),
+    );
     this.events2
       .get(WAHAEvents.MESSAGE_EDITED)
-      .switch(merge(theirEdits$, ourEdits$).pipe(filter(Boolean)));
+      .switch(merge(theirEdits$, ourEdits$, sentEdits$).pipe(filter(Boolean)));
 
     this.events2
       .get(WAHAEvents.PRESENCE_UPDATE)
@@ -603,7 +617,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
 
     // A revoke arrives as a protocol message rather than an addon.
     this.events2.get(WAHAEvents.MESSAGE_REVOKED).switch(
-      this.protocol$.asObservable().pipe(
+      merge(this.protocol$.asObservable(), sent$).pipe(
         filter((event) => event.protocolMessage?.type === REVOKE_PROTOCOL_TYPE),
         map((event) => this.toMessageRevoked(event)),
         filter(Boolean),
@@ -793,6 +807,48 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     } catch (error) {
       this.logger.warn({ error: error }, 'Failed to store a push name');
     }
+  }
+
+  /**
+   * What this device sends, shaped like something it received.
+   *
+   * GOWS builds a message event after every send and hands it to the same
+   * handler its incoming ones go through, so a reaction, an edit or a revoke
+   * made through the API reaches the same webhooks as one made on the phone.
+   * The outgoing event carries no key, only the destination and the stanza id,
+   * so one is built from those.
+   */
+  private toSelfEvent(event: any): any {
+    const content: any = event.message;
+    return {
+      key: {
+        remoteJid: event.to,
+        fromMe: true,
+        id: event.id,
+        isGroup: isJidGroup(toJID(event.to)),
+      },
+      message: content,
+      protocolMessage: content?.protocolMessage,
+      timestampSeconds: Math.floor(Date.now() / SECOND),
+    };
+  }
+
+  /**
+   * An edit this device sent, which travels as a protocol message carrying the
+   * replacement rather than as an encrypted addon. Mirrors how GOWS reads one.
+   */
+  private toMessageEditedFromProtocol(event: any) {
+    const protocolMessage = event.protocolMessage;
+    const key = protocolMessage?.key;
+    if (!key?.id) {
+      return null;
+    }
+    return {
+      ...this.addonBase(event),
+      body: extractBody(protocolMessage.editedMessage) || null,
+      editedMessageId: this.toTargetMessageId(event.key, key),
+      _data: this.toPlainData(event),
+    };
   }
 
   private toOutgoingWAMessage(event: any): WAMessage {
