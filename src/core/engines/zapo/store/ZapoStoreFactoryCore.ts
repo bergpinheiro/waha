@@ -1,3 +1,11 @@
+import { KNEX_SQLITE_CLIENT } from '@waha/core/env';
+import {
+  buildMongoContactStore,
+  buildPsqlContactStore,
+  buildSqliteContactStore,
+  ZapoContactStore,
+} from '@waha/core/engines/zapo/store/ZapoContactStore';
+import Knex from 'knex';
 import { createMongoStore } from '@zapo-js/store-mongo';
 import { createPostgresStore } from '@zapo-js/store-postgres';
 import { createSqliteStore } from '@zapo-js/store-sqlite';
@@ -12,8 +20,8 @@ import {
   WaStoreBackend,
 } from 'zapo-js';
 
-/** The single backend name every domain of a session is routed to. */
-type Backend = 'waha';
+/** Backend names: the library bundle, plus WAHA's own contact store. */
+type Backend = 'waha' | 'contacts';
 
 /**
  * zapo narrows each provider to the backends that actually declare the domain,
@@ -24,12 +32,34 @@ type Backend = 'waha';
  * one when the backend values aren't in scope"), which keeps the options fully
  * type-checked without casting anything away.
  */
-function buildStore(backend: WaStoreBackend): WaStore {
+/**
+ * Contacts are routed to a WAHA-backed store instead of the library one.
+ * The library only ever needs keyed lookup, so its contact store has no
+ * enumeration, while WAHA exposes GET /api/contacts/all. Everything else
+ * stays on the @zapo-js backend.
+ */
+function buildStore(
+  backend: WaStoreBackend,
+  contacts: ZapoContactStore,
+): WaStore {
+  const contactsBackend = {
+    stores: { contacts: () => contacts },
+    caches: {},
+  };
   const options = {
-    backends: { waha: backend },
+    backends: { waha: backend, contacts: contactsBackend },
     providers: PROVIDERS,
   } as unknown as WaCreateStoreOptionsStrict<Backend>;
   return createStore(options);
+}
+
+function buildSqliteKnex(filePath: string): Knex.Knex {
+  return Knex({
+    client: KNEX_SQLITE_CLIENT,
+    connection: { filename: filePath },
+    useNullAsDefault: true,
+    pool: { min: 1, max: 10, idleTimeoutMillis: 60_000 },
+  });
 }
 
 /**
@@ -49,7 +79,7 @@ const PROVIDERS = {
   privacyToken: 'waha',
   messages: 'waha',
   threads: 'waha',
-  contacts: 'waha',
+  contacts: 'contacts',
 } as const;
 
 /**
@@ -86,7 +116,10 @@ export class ZapoStoreFactoryCore {
 
   private buildSqlite(store: LocalStore, name: string): WaStore {
     const filePath = store.getFilePath(name, SQLITE_FILE);
-    return buildStore(createSqliteStore({ path: filePath }));
+    return buildStore(
+      createSqliteStore({ path: filePath }),
+      buildSqliteContactStore(buildSqliteKnex(filePath)),
+    );
   }
 
   private buildPsql(store: PsqlStore, name: string): WaStore {
@@ -97,15 +130,15 @@ export class ZapoStoreFactoryCore {
         pool: { connectionString: store.getSessionDbURL(name) },
         tablePrefix: PREFIX,
       }),
+      buildPsqlContactStore(store.buildSessionKnex(name, 'Zapo/Contacts')),
     );
   }
 
   private buildMongo(store: MongoStore, name: string): WaStore {
+    const db = store.getSessionDb(name);
     return buildStore(
-      createMongoStore({
-        db: store.getSessionDb(name),
-        collectionPrefix: PREFIX,
-      }),
+      createMongoStore({ db: db, collectionPrefix: PREFIX }),
+      buildMongoContactStore(db),
     );
   }
 }

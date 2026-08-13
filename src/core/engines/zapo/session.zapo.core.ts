@@ -6,6 +6,7 @@ import {
   WhatsappSession,
 } from '@waha/core/abc/session.abc';
 import { ZapoEngineLogger } from '@waha/core/engines/zapo/ZapoEngineLogger';
+import { ZapoContactStore } from '@waha/core/engines/zapo/store/ZapoContactStore';
 import { ZapoStoreFactoryCore } from '@waha/core/engines/zapo/store/ZapoStoreFactoryCore';
 import { NotImplementedByEngineError } from '@waha/core/exceptions';
 import { extractBody } from '@waha/core/engines/noweb/session.noweb.core';
@@ -239,6 +240,8 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
 
   private async buildClient() {
     this.store = this.storeFactory.createStore(this.sessionStore, this.name);
+    // Creates the contacts table before the library starts writing to it.
+    await this.contactStore().init();
     const engineLogger = new ZapoEngineLogger(
       this.loggerBuilder.child({ name: 'ZapoEngine' }) as any,
     );
@@ -888,13 +891,22 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   }
 
   /**
-   * The contact store is keyed lookup only - it has getByJid and
-   * getByPhoneNumber but no enumeration - so there is nothing to list from.
-   * Fetching every contact would mean a full usync sweep, which is a
-   * different operation from reading local state.
+   * Reads from WAHA's own contact store, which the session store routes the
+   * contacts domain to. The library's store has keyed lookup only, so listing
+   * would not be possible on top of it.
    */
-  getContacts(pagination: PaginationParams) {
-    throw new NotImplementedByEngineError();
+  @Activity()
+  async getContacts(pagination: PaginationParams) {
+    const contacts = await this.contactStore().list(pagination);
+    return contacts.map((contact) => this.toContact(contact));
+  }
+
+  private contactStore(): ZapoContactStore {
+    const contacts = this.store.session(this.name).contacts;
+    if (!(contacts instanceof ZapoContactStore)) {
+      throw new Error('Contacts are not routed to the WAHA contact store.');
+    }
+    return contacts;
   }
 
   @Activity()
