@@ -4,6 +4,8 @@ import {
   hexColorToArgb,
   matchesChannelRole,
   toParticipantRole,
+  toPresenceStatus,
+  toTargetMessageId,
   toZapoKey,
   WAHA_PRESENCE_TO_CHATSTATE,
   ZAPO_CHANNEL_ROLE,
@@ -163,6 +165,88 @@ describe('ZAPO converters', () => {
     it('sees through an ephemeral wrapper', () => {
       const wrapped = { ephemeralMessage: { message: { reactionMessage: {} } } };
       expect(hasDedicatedEvent(wrapped)).toBe(true);
+    });
+  });
+
+  describe('toPresenceStatus', () => {
+    // The wire value is 'composing', which is not what the enum calls it -
+    // reported raw, nobody comparing against TYPING ever matches.
+    it('reads typing from a composing chatstate', () => {
+      expect(toPresenceStatus({ state: 'composing' })).toEqual(
+        WAHAPresenceStatus.TYPING,
+      );
+    });
+
+    it('tells a voice note apart by its media', () => {
+      expect(toPresenceStatus({ state: 'composing', media: 'audio' })).toEqual(
+        WAHAPresenceStatus.RECORDING,
+      );
+    });
+
+    it('reads paused', () => {
+      expect(toPresenceStatus({ state: 'paused' })).toEqual(
+        WAHAPresenceStatus.PAUSED,
+      );
+    });
+
+    it('reads the account-wide presences from the type', () => {
+      expect(toPresenceStatus({ type: 'available' })).toEqual(
+        WAHAPresenceStatus.ONLINE,
+      );
+      expect(toPresenceStatus({ type: 'unavailable' })).toEqual(
+        WAHAPresenceStatus.OFFLINE,
+      );
+    });
+
+    it('never answers a value outside the enum', () => {
+      const known = Object.values(WAHAPresenceStatus);
+      expect(known).toContain(toPresenceStatus({ type: 'whatever' }));
+      expect(known).toContain(toPresenceStatus({}));
+    });
+  });
+
+  describe('toTargetMessageId', () => {
+    // Every identity this account answers to; a 1:1 target names one of them.
+    const ours = ['558540423147@c.us', '72318944542853@lid'];
+    // The chat the reaction itself arrived in, which is the contact.
+    const eventKey = { remoteJid: '77820596330581@lid', fromMe: false };
+
+    it('reads a target we wrote as ours', () => {
+      // They reacted to something we sent: from their side the chat is us and
+      // the message is not theirs.
+      const target = { id: 'AAA', remoteJid: '72318944542853@lid', fromMe: false };
+      expect(toTargetMessageId(eventKey, target, ours)).toEqual(
+        'true_77820596330581@lid_AAA',
+      );
+    });
+
+    it('reads a target they wrote as theirs', () => {
+      // They reacted to something they sent - the case that came out as ours.
+      const target = { id: 'BBB', remoteJid: '72318944542853@lid', fromMe: true };
+      expect(toTargetMessageId(eventKey, target, ours)).toEqual(
+        'false_77820596330581@lid_BBB',
+      );
+    });
+
+    it('leaves a group target alone', () => {
+      // A group is never one of our identities, so nothing is inverted.
+      const groupKey = { remoteJid: '123@g.us', fromMe: false };
+      const target = {
+        id: 'CCC',
+        remoteJid: '123@g.us',
+        fromMe: true,
+        participant: '558591203123@s.whatsapp.net',
+      };
+      expect(toTargetMessageId(groupKey, target, ours)).toEqual(
+        'true_123@g.us_CCC_558591203123@c.us',
+      );
+    });
+
+    it('round-trips through toZapoKey', () => {
+      const target = { id: 'DDD', remoteJid: '72318944542853@lid', fromMe: false };
+      const id = toTargetMessageId(eventKey, target, ours);
+      expect(toZapoKey(id).id).toEqual('DDD');
+      expect(toZapoKey(id).fromMe).toBe(true);
     });
   });
 

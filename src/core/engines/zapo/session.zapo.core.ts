@@ -17,6 +17,8 @@ import {
   hexColorToArgb,
   matchesChannelRole,
   toParticipantRole,
+  toPresenceStatus,
+  toTargetMessageId,
   toZapoKey,
   WAHA_PRESENCE_TO_CHATSTATE,
   ZAPO_CHANNEL_ROLE,
@@ -48,6 +50,7 @@ import {
   isJidNewsletter,
   isJidStatusBroadcast,
   isLidUser,
+  isPnUser,
   normalizeJid,
   toCusFormat,
   toJID,
@@ -106,6 +109,7 @@ import {
   SettingsMemberAddMode,
   SettingsSecurityChangeInfo,
 } from '@waha/structures/groups.dto';
+import { GroupParticipantType } from '@waha/structures/groups.events.dto';
 import { PaginationParams } from '@waha/structures/pagination.dto';
 import {
   SECOND,
@@ -198,8 +202,9 @@ interface EngineEvent {
  */
 const MEDIA_PROCESSOR = createMediaProcessor();
 
-/** protocolMessage.type for a revoke, which is what REVOKE maps to. */
-const REVOKE_PROTOCOL_TYPE = 0;
+/** protocolMessage.type for a revoke. */
+const REVOKE_PROTOCOL_TYPE = proto.Message.ProtocolMessage.Type
+  .REVOKE as number;
 
 /** protocolMessage.type for an edit, which is what MESSAGE_EDIT maps to. */
 const EDIT_PROTOCOL_TYPE =
@@ -211,7 +216,24 @@ const EDIT_PROTOCOL_TYPE =
  */
 const GROUP_JOIN_ACTIONS = ['create', 'invite', 'link'];
 const GROUP_LEAVE_ACTIONS = ['delete', 'unlink', 'suspend'];
-const GROUP_PARTICIPANT_ACTIONS = ['add', 'remove', 'promote', 'demote'];
+/**
+ * The membership actions, each with the WAHA type it reports. The role a
+ * participant gets follows from the type, the way GOWS derives it.
+ */
+const GROUP_PARTICIPANT_TYPES: Record<string, GroupParticipantType> = {
+  add: GroupParticipantType.JOIN,
+  remove: GroupParticipantType.LEAVE,
+  promote: GroupParticipantType.PROMOTE,
+  demote: GroupParticipantType.DEMOTE,
+};
+
+const GROUP_PARTICIPANT_ROLES: Record<GroupParticipantType, GroupParticipantRole> =
+  {
+    [GroupParticipantType.JOIN]: GroupParticipantRole.PARTICIPANT,
+    [GroupParticipantType.LEAVE]: GroupParticipantRole.LEFT,
+    [GroupParticipantType.PROMOTE]: GroupParticipantRole.ADMIN,
+    [GroupParticipantType.DEMOTE]: GroupParticipantRole.PARTICIPANT,
+  };
 const GROUP_UPDATE_ACTIONS = [
   'subject',
   'description',
@@ -225,11 +247,6 @@ const GROUP_UPDATE_ACTIONS = [
 ];
 
 /** Account-wide presence, in the names WAHA reports. */
-const ZAPO_PRESENCE_TO_WAHA = {
-  available: WAHAPresenceStatus.ONLINE,
-  unavailable: WAHAPresenceStatus.OFFLINE,
-};
-
 /** Upper bound for the one-off backfill of the chat index. */
 const CHAT_INDEX_SEED_MAX = 1000;
 
@@ -563,10 +580,10 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       .switch(this.groupEvents(groups$, GROUP_LEAVE_ACTIONS));
     this.events2
       .get(WAHAEvents.GROUP_V2_PARTICIPANTS)
-      .switch(this.groupEvents(groups$, GROUP_PARTICIPANT_ACTIONS));
+      .switch(this.groupParticipantEvents(groups$));
     this.events2
       .get(WAHAEvents.GROUP_V2_UPDATE)
-      .switch(this.groupEvents(groups$, GROUP_UPDATE_ACTIONS));
+      .switch(this.groupUpdateEvents(groups$));
 
     // Labels live in app state: LabelEdit is the label itself, LabelJid is its
     // association with a chat. A removed label arrives either as the remove
@@ -1028,8 +1045,10 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   }
 
   /**
-   * A revoke names the message it removed. `before` stays null: the original
-   * is not read back here, which is what GOWS reports as well.
+   * A revoke names the message it removed. `after` carries the stanza that
+   * removed it, so a consumer can tell who revoked and when, the way GOWS
+   * reports it. `before` stays null: the original is not read back here,
+   * which is what GOWS does as well.
    */
   private toMessageRevoked(event: any) {
     const key = event.protocolMessage?.key;
@@ -1037,7 +1056,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       return null;
     }
     return {
-      after: null,
+      after: this.addonBase(event),
       before: null,
       revokedMessageId: this.toTargetMessageId(event.key, key),
       _data: this.toPlainData(event),
@@ -1047,8 +1066,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   /** Presence and chatstate both describe one chat, in the same shape. */
   private toChatPresences(event: any): WAHAChatPresences {
     const jid = event.chatJid ?? event.participantJid;
-    const presence =
-      event.state ?? ZAPO_PRESENCE_TO_WAHA[event.type] ?? event.type;
+    const presence = toPresenceStatus(event);
     return {
       id: toCusFormat(jid),
       presences: [
@@ -1085,15 +1103,96 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     return source.pipe(
       filter((event) => actions.includes(event.action)),
       map((event) => ({
-        timestamp: (event.timestampSeconds ?? 0) * SECOND || Date.now(),
+        timestamp: this.groupTimestamp(event),
         group: { id: toCusFormat(event.groupJid) },
         _data: this.toPlainData(event),
       })),
     );
   }
 
+  /**
+   * Membership changes, which name who changed and how. The role comes from
+   * the action rather than from the participant's own attribute, the way GOWS
+   * derives it: someone who just left is LEFT, someone promoted is ADMIN.
+   */
+  private groupParticipantEvents(source: Observable<any>) {
+    return source.pipe(
+      filter((event) => Boolean(GROUP_PARTICIPANT_TYPES[event.action])),
+      map((event) => {
+        const type = GROUP_PARTICIPANT_TYPES[event.action];
+        return {
+          group: { id: toCusFormat(event.groupJid) },
+          type: type,
+          timestamp: this.groupTimestamp(event),
+          participants: (event.participants ?? []).map((participant) =>
+            this.toGroupEventParticipant(participant, type),
+          ),
+          _data: this.toPlainData(event),
+        };
+      }),
+    );
+  }
+
+  private toGroupEventParticipant(
+    participant: any,
+    type: GroupParticipantType,
+  ): GroupParticipant {
+    const id = toCusFormat(
+      participant.jid ?? participant.lidJid ?? participant.phoneJid,
+    );
+    return {
+      id: id,
+      pn: isPnUser(id) ? id : null,
+      role: GROUP_PARTICIPANT_ROLES[type],
+    };
+  }
+
+  /**
+   * Metadata changes, which carry what actually changed. `group` is a partial
+   * GroupInfo, so only the fields the stanza brought are reported.
+   */
+  private groupUpdateEvents(source: Observable<any>) {
+    return source.pipe(
+      filter((event) => GROUP_UPDATE_ACTIONS.includes(event.action)),
+      map((event) => {
+        const group: any = { id: toCusFormat(event.groupJid) };
+        if (event.subject !== undefined) {
+          group.subject = event.subject;
+        }
+        if (event.description !== undefined) {
+          group.description = event.description;
+        }
+        return {
+          timestamp: this.groupTimestamp(event),
+          group: group,
+          _data: this.toPlainData(event),
+        };
+      }),
+    );
+  }
+
+  /**
+   * Honours WHATSAPP_SESSION_IGNORE_*, which otherwise only applied to
+   * messages. A call reaches us either from a chat or from a group, so both
+   * are consulted, the way GOWS consults them.
+   */
+  private shouldProcessCallEvent(event: any): boolean {
+    if (!event) {
+      return false;
+    }
+    if (event.groupJid) {
+      return this.jids.include(event.groupJid);
+    }
+    return this.jids.include(event.callCreatorJid ?? event.chatJid);
+  }
+
+  private groupTimestamp(event: any): number {
+    return (event.timestampSeconds ?? 0) * SECOND || Date.now();
+  }
+
   private callEvents(source: Observable<any>, types: string[]) {
     return source.pipe(
+      filter((event) => this.shouldProcessCallEvent(event)),
       filter((event) => types.includes(event.type)),
       map((event) => this.toCallData(event)),
     );
@@ -1126,28 +1225,16 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     };
   }
 
-  /**
-   * The id of the message an event points at, seen from this account.
-   *
-   * The sender addresses the target from their own side: reacting to
-   * something we sent, they name us as the chat and mark it as not theirs.
-   * Read back as-is that produces an id in a chat that does not exist here, so
-   * the chat comes from the event and the direction is flipped when the target
-   * turns out to be ours.
-   */
-  private toTargetMessageId(eventKey: any, target: any): string {
+  /** Every chat id this account answers to, for reading a target back. */
+  private ourChatIds(): string[] {
     const me = this.getSessionMeInfo();
-    const mine = [me?.lid, me?.id, me?.jid ? normalizeJid(me.jid) : null]
+    return [me?.lid, me?.id, me?.jid ? normalizeJid(me.jid) : null]
       .filter(Boolean)
       .map((jid) => toCusFormat(jid));
-    const targetChat = target.remoteJid ? toCusFormat(target.remoteJid) : null;
-    const targetIsOurs = Boolean(targetChat && mine.includes(targetChat));
-    return buildMessageId({
-      id: target.id,
-      fromMe: targetIsOurs ? true : Boolean(target.fromMe),
-      remoteJid: eventKey?.remoteJid ?? target.remoteJid,
-      participant: target.participant,
-    });
+  }
+
+  private toTargetMessageId(eventKey: any, target: any): string {
+    return toTargetMessageId(eventKey, target, this.ourChatIds());
   }
 
   /** The message an addon points at, in the id form the API accepts back. */

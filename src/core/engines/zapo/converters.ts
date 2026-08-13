@@ -140,3 +140,57 @@ export function hasDedicatedEvent(message: any): boolean {
       content.secretEncryptedMessage,
   );
 }
+
+/** The account-wide presences, which the protocol names differently. */
+const ZAPO_PRESENCE_TO_WAHA: Record<string, WAHAPresenceStatus> = {
+  available: WAHAPresenceStatus.ONLINE,
+  unavailable: WAHAPresenceStatus.OFFLINE,
+};
+
+/**
+ * The presence an event reports, in WAHA's own vocabulary.
+ *
+ * A chatstate arrives as the wire value - `composing` or `paused`, with
+ * `media: 'audio'` telling a voice note apart from typing - and none of those
+ * are what WAHAPresenceStatus calls them. Reported raw, a consumer comparing
+ * against TYPING never matches. Mirrors how GOWS reads the pair.
+ */
+export function toPresenceStatus(event: any): WAHAPresenceStatus {
+  if (event?.state === 'composing') {
+    return event.media === 'audio'
+      ? WAHAPresenceStatus.RECORDING
+      : WAHAPresenceStatus.TYPING;
+  }
+  if (event?.state === 'paused') {
+    return WAHAPresenceStatus.PAUSED;
+  }
+  return ZAPO_PRESENCE_TO_WAHA[event?.type] ?? WAHAPresenceStatus.OFFLINE;
+}
+
+/**
+ * The id of the message an event points at, seen from this account.
+ *
+ * A message key is written from the perspective of whoever holds it, so the
+ * target of an addon someone else sent is addressed from their side: in a 1:1
+ * chat its `remoteJid` is us, and its `fromMe` says whether *they* wrote the
+ * message. Read back as-is that names a chat that does not exist here and
+ * reverses the authorship, so when the target is addressed to us the chat
+ * comes from the event and the direction is inverted.
+ *
+ * In a group the target already names the group, which is never one of our
+ * identities, so it is read unchanged.
+ */
+export function toTargetMessageId(
+  eventKey: any,
+  target: any,
+  ourChatIds: readonly string[],
+): string {
+  const targetChat = target?.remoteJid ? toCusFormat(target.remoteJid) : null;
+  const addressedToUs = Boolean(targetChat && ourChatIds.includes(targetChat));
+  return buildMessageId({
+    id: target?.id,
+    fromMe: addressedToUs ? !target.fromMe : Boolean(target?.fromMe),
+    remoteJid: eventKey?.remoteJid ?? target?.remoteJid,
+    participant: target?.participant,
+  });
+}
