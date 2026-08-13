@@ -154,6 +154,7 @@ describeStorage('ZAPO contact store over WAHA storage', () => {
   let previousBaseDir: string | undefined;
   let localStore: LocalStoreCore;
   let contacts: ZapoContactStore;
+  let storage: any;
 
   beforeAll(async () => {
     baseDir = await fs.mkdtemp(path.join(os.tmpdir(), 'waha-zapo-store-'));
@@ -163,12 +164,15 @@ describeStorage('ZAPO contact store over WAHA storage', () => {
     localStore = new LocalStoreCore('zapo', 'zapo');
     await localStore.init(SESSION);
 
-    const store = new ZapoStoreFactoryCore().createStore(localStore, SESSION);
-    contacts = store.session(SESSION).contacts as ZapoContactStore;
+    // The factory hands the contact store back directly: WaStore.session()
+    // returns a lock-wrapped bundle, not the instance that was registered.
+    storage = new ZapoStoreFactoryCore().createStorage(localStore, SESSION);
+    contacts = storage.contacts;
     await contacts.init();
   }, 60_000);
 
   afterAll(async () => {
+    await storage?.close().catch(() => undefined);
     await localStore?.close().catch(() => undefined);
     if (previousBaseDir === undefined) {
       delete process.env.WAHA_LOCAL_STORE_BASE_DIR;
@@ -180,6 +184,18 @@ describeStorage('ZAPO contact store over WAHA storage', () => {
 
   it('routes contacts to the WAHA store rather than the library one', () => {
     expect(contacts).toBeInstanceOf(ZapoContactStore);
+  });
+
+  it('is only reachable through the factory, not through session()', async () => {
+    const other = new ZapoStoreFactoryCore().createStorage(localStore, SESSION);
+    // session() hands back a lock-wrapped bundle, so the listing this engine
+    // adds is not on it - reading the store back from there loses it.
+    const wrapped: any = other.store.session(SESSION).contacts;
+    expect(wrapped).not.toBeInstanceOf(ZapoContactStore);
+    expect(typeof wrapped.list).not.toEqual('function');
+    // ...while the contract the library relies on is still there.
+    expect(typeof wrapped.getByJid).toEqual('function');
+    await other.close();
   });
 
   it('stores a contact and reads it back by jid and by phone number', async () => {

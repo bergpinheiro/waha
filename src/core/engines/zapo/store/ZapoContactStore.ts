@@ -1,4 +1,7 @@
-import { ZapoContactSchema } from '@waha/core/engines/zapo/store/schemas';
+import {
+  ZapoContactSchema,
+  ZapoMigrations,
+} from '@waha/core/engines/zapo/store/schemas';
 import { MongoRepository } from '@waha/core/engines/noweb/store/mongodb/MongoRepository';
 import { Schema } from '@waha/core/storage/Schema';
 import { PsqlKVRepository } from '@waha/core/storage/psql/PsqlKVRepository';
@@ -52,6 +55,10 @@ export class Sqlite3ZapoContactRepository extends Sqlite3KVRepository<ZapoContac
     return ZapoContactSchema;
   }
 
+  get migrations(): string[] {
+    return ZapoMigrations;
+  }
+
   get metadata() {
     return METADATA;
   }
@@ -62,6 +69,10 @@ export class PsqlZapoContactRepository extends PsqlKVRepository<ZapoContactEntit
 
   get schema(): Schema {
     return ZapoContactSchema;
+  }
+
+  get migrations(): string[] {
+    return ZapoMigrations;
   }
 
   get metadata() {

@@ -91,6 +91,31 @@ const PREFIX = 'zapo_';
 const SQLITE_FILE = 'zapo.sqlite3';
 
 /**
+ * The store the library gets, plus a direct handle on the contact store.
+ *
+ * WaStore.session() hands back a lock-wrapped bundle rather than the instance
+ * that was registered, so the WAHA-specific listing is only reachable through
+ * the reference kept here.
+ */
+export interface ZapoStorage {
+  readonly store: WaStore;
+  readonly contacts: ZapoContactStore;
+  /** Releases the library backends and any connection opened for this session. */
+  close(): Promise<void>;
+}
+
+/**
+ * Sessions are started and stopped repeatedly, so every connection opened here
+ * has to be released on stop - the same contract the NOWEB storage follows.
+ */
+function closeStorage(store: WaStore, knex?: Knex.Knex): () => Promise<void> {
+  return async () => {
+    await store.destroy().catch(() => undefined);
+    await knex?.destroy().catch(() => undefined);
+  };
+}
+
+/**
  * Builds the zapo store on top of the storage WAHA already owns.
  *
  * The three zapo store packages line up one-to-one with WAHA's three data
@@ -101,7 +126,7 @@ const SQLITE_FILE = 'zapo.sqlite3';
  * Mirrors NowebStorageFactoryCore so both engines resolve storage the same way.
  */
 export class ZapoStoreFactoryCore {
-  createStore(store: DataStore, name: string): WaStore {
+  createStorage(store: DataStore, name: string): ZapoStorage {
     if (store instanceof MongoStore) {
       return this.buildMongo(store, name);
     }
@@ -114,31 +139,50 @@ export class ZapoStoreFactoryCore {
     throw new Error(`Unsupported store type '${store.constructor.name}'`);
   }
 
-  private buildSqlite(store: LocalStore, name: string): WaStore {
+  private buildSqlite(store: LocalStore, name: string): ZapoStorage {
     const filePath = store.getFilePath(name, SQLITE_FILE);
-    return buildStore(
-      createSqliteStore({ path: filePath }),
-      buildSqliteContactStore(buildSqliteKnex(filePath)),
-    );
+    const knex = buildSqliteKnex(filePath);
+    const contacts = buildSqliteContactStore(knex);
+    const waStore = buildStore(createSqliteStore({ path: filePath }), contacts);
+    return {
+      store: waStore,
+      contacts: contacts,
+      close: closeStorage(waStore, knex),
+    };
   }
 
-  private buildPsql(store: PsqlStore, name: string): WaStore {
+  private buildPsql(store: PsqlStore, name: string): ZapoStorage {
     // getSessionDbURL points at the session database WAHA already provisioned,
     // so zapo's tables land there instead of in a database of its own.
-    return buildStore(
+    const knex = store.buildSessionKnex(name, 'Zapo/Contacts');
+    const contacts = buildPsqlContactStore(knex);
+    const waStore = buildStore(
       createPostgresStore({
         pool: { connectionString: store.getSessionDbURL(name) },
         tablePrefix: PREFIX,
       }),
-      buildPsqlContactStore(store.buildSessionKnex(name, 'Zapo/Contacts')),
+      contacts,
     );
+    return {
+      store: waStore,
+      contacts: contacts,
+      close: closeStorage(waStore, knex),
+    };
   }
 
-  private buildMongo(store: MongoStore, name: string): WaStore {
+  private buildMongo(store: MongoStore, name: string): ZapoStorage {
+    // The Db belongs to the MongoStore, so only the library backends are
+    // released here.
     const db = store.getSessionDb(name);
-    return buildStore(
+    const contacts = buildMongoContactStore(db);
+    const waStore = buildStore(
       createMongoStore({ db: db, collectionPrefix: PREFIX }),
-      buildMongoContactStore(db),
+      contacts,
     );
+    return {
+      store: waStore,
+      contacts: contacts,
+      close: closeStorage(waStore),
+    };
   }
 }

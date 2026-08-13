@@ -16,8 +16,10 @@ import {
   ZAPO_CHANNEL_ROLE,
   ZAPO_RECEIPT_TO_ACK,
 } from '@waha/core/engines/zapo/converters';
-import { ZapoContactStore } from '@waha/core/engines/zapo/store/ZapoContactStore';
-import { ZapoStoreFactoryCore } from '@waha/core/engines/zapo/store/ZapoStoreFactoryCore';
+import {
+  ZapoStorage,
+  ZapoStoreFactoryCore,
+} from '@waha/core/engines/zapo/store/ZapoStoreFactoryCore';
 import { NotImplementedByEngineError } from '@waha/core/exceptions';
 import { extractBody } from '@waha/core/engines/noweb/session.noweb.core';
 import { extractMediaContent } from '@waha/core/engines/noweb/utils';
@@ -149,7 +151,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   storeFactory = new ZapoStoreFactoryCore();
 
   private client: WaClient;
-  private store: WaStore;
+  private storage: ZapoStorage;
   private qr: QR;
   private all$: Subject<EngineEvent>;
   private incoming$: Subject<WaIncomingMessageEvent>;
@@ -175,16 +177,19 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   }
 
   private async buildClient() {
-    this.store = this.storeFactory.createStore(this.sessionStore, this.name);
+    this.storage = this.storeFactory.createStorage(
+      this.sessionStore,
+      this.name,
+    );
     // Creates the contacts table before the library starts writing to it.
-    await this.contactStore().init();
+    await this.storage.contacts.init();
     const engineLogger = new ZapoEngineLogger(
       this.loggerBuilder.child({ name: 'ZapoEngine' }) as any,
     );
 
     this.client = new WaClient(
       {
-        store: this.store,
+        store: this.storage.store,
         sessionId: this.name,
         proxy: this.buildProxyOptions(),
         media: { processor: MEDIA_PROCESSOR },
@@ -377,6 +382,9 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     this.unsubscribes = [];
     await this.client?.disconnect();
     this.client = null;
+    // Releases the database connections opened for this session.
+    await this.storage?.close();
+    this.storage = null;
     this.stopEvents();
   }
 
@@ -471,7 +479,9 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   @Activity()
   async forwardMessage(request: MessageForwardRequest): Promise<WAMessage> {
     const key = toZapoKey(request.messageId, request.chatId);
-    const stored = await this.store.session(this.name).messages.getById(key.id);
+    const stored = await this.storage.store
+      .session(this.name)
+      .messages.getById(key.id);
     if (!stored?.messageBytes) {
       throw new UnprocessableEntityException(
         `Message '${request.messageId}' is not available to forward.`,
@@ -614,7 +624,9 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   @Activity()
   async sendPollVote(request: MessagePollVoteRequest) {
     const key = toZapoKey(request.pollMessageId, request.chatId);
-    const entry = await this.store.session(this.name).messageSecret.get(key.id);
+    const entry = await this.storage.store
+      .session(this.name)
+      .messageSecret.get(key.id);
     if (!entry) {
       throw new UnprocessableEntityException(
         `Poll '${request.pollMessageId}' is not available to vote on.`,
@@ -665,7 +677,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
    * session runs, so they only cover what this session has seen.
    */
   async getChats(pagination: PaginationParams) {
-    const threads = await this.store
+    const threads = await this.storage.store
       .session(this.name)
       .threads.list(pagination?.limit);
     return threads.map((thread) => this.toChatSummary(thread));
@@ -691,7 +703,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     query: GetChatMessagesQuery,
     filter: GetChatMessagesFilter,
   ): Promise<WAMessage[]> {
-    const records = await this.store
+    const records = await this.storage.store
       .session(this.name)
       .messages.listByThread(
         toJID(chatId),
@@ -719,7 +731,9 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     query: GetChatMessageQuery,
   ): Promise<null | WAMessage> {
     const key = toZapoKey(messageId, chatId);
-    const record = await this.store.session(this.name).messages.getById(key.id);
+    const record = await this.storage.store
+      .session(this.name)
+      .messages.getById(key.id);
     if (!record) {
       return null;
     }
@@ -727,7 +741,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   }
 
   private async getLastMessage(chatId: string) {
-    const records = await this.store
+    const records = await this.storage.store
       .session(this.name)
       .messages.listByThread(toJID(chatId), 1);
     if (!records.length) {
@@ -833,22 +847,16 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
    */
   @Activity()
   async getContacts(pagination: PaginationParams) {
-    const contacts = await this.contactStore().list(pagination);
+    const contacts = await this.storage.contacts.list(pagination);
     return contacts.map((contact) => this.toContact(contact));
-  }
-
-  private contactStore(): ZapoContactStore {
-    const contacts = this.store.session(this.name).contacts;
-    if (!(contacts instanceof ZapoContactStore)) {
-      throw new Error('Contacts are not routed to the WAHA contact store.');
-    }
-    return contacts;
   }
 
   @Activity()
   async getContact(query: ContactQuery) {
     const jid = toJID(query.contactId);
-    const stored = await this.store.session(this.name).contacts.getByJid(jid);
+    const stored = await this.storage.store
+      .session(this.name)
+      .contacts.getByJid(jid);
     if (stored) {
       return this.toContact(stored);
     }

@@ -21,3 +21,17 @@ export const ZapoContactSchema = new Schema(
     new Index('zapo_contacts_phone_index', ['phoneNumber']),
   ],
 );
+
+/**
+ * The repository base only runs the statements listed here - it does not
+ * derive DDL from the schema - so the table has to be declared explicitly,
+ * the same way the NOWEB store declares its own.
+ *
+ * Quoted "phoneNumber" keeps the camel case on Postgres, which folds unquoted
+ * identifiers to lower case. Every statement is idempotent.
+ */
+export const ZapoMigrations: string[] = [
+  'CREATE TABLE IF NOT EXISTS zapo_contacts (id TEXT PRIMARY KEY, lid TEXT, "phoneNumber" TEXT, data TEXT)',
+  'CREATE UNIQUE INDEX IF NOT EXISTS zapo_contacts_id_index ON zapo_contacts (id)',
+  'CREATE INDEX IF NOT EXISTS zapo_contacts_phone_index ON zapo_contacts ("phoneNumber")',
+];
