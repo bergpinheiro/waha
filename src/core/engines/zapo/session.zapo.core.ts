@@ -191,13 +191,6 @@ const MEDIA_PROCESSOR = createMediaProcessor();
 /** Upper bound for the one-off backfill of the chat index. */
 const CHAT_INDEX_SEED_MAX = 1000;
 
-/**
- * WhatsApp nacks every status publish from this library with `error=400`,
- * whatever the content or recipients - reproduced with zapo-js alone, no WAHA
- * in the path, using the shape its own guide documents. The four status
- * methods below call the right API and are left in place, but they do not
- * work on zapo-js@1.7.1; nothing else in the engine is affected.
- */
 export class WhatsappSessionZapoCore extends WhatsappSession {
   engine = WAHAEngine.ZAPO;
 
@@ -1516,14 +1509,34 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   private async resolveStatusRecipients(
     contacts?: string[],
   ): Promise<string[]> {
-    const known = contacts?.length
-      ? contacts.map((contact) => toJID(contact))
-      : (await this.storage.contacts.list())
-          .map((contact) => contact.phoneNumber || contact.jid)
-          .filter((jid) => jid?.endsWith('@s.whatsapp.net'));
-    // The library adds the account itself and defaults the distribution
-    // setting, so neither is repeated here.
-    return [...new Set(known)];
+    // A status goes out as a sender-key fanout, and on a LID-addressed account
+    // the server rejects the whole publish with a 400 if a single recipient is
+    // phone-addressed. Every recipient is resolved to its @lid identity; the
+    // library adds the account itself and defaults the distribution setting.
+    if (contacts?.length) {
+      const resolved = await Promise.all(
+        contacts.map((contact) => this.toStatusRecipient(contact)),
+      );
+      return [...new Set(resolved.filter(Boolean))];
+    }
+    const known = await this.storage.contacts.list();
+    const lids = known
+      .map((contact) => (isLidUser(contact.jid) ? contact.jid : contact.lid))
+      .filter(Boolean);
+    return [...new Set(lids)];
+  }
+
+  /** The @lid identity of a recipient, which is what a status publish takes. */
+  private async toStatusRecipient(contact: string): Promise<string | null> {
+    const jid = toJID(contact);
+    if (isLidUser(jid)) {
+      return jid;
+    }
+    const known = await this.storage.contacts.getByJid(jid);
+    if (known?.lid) {
+      return known.lid;
+    }
+    return isLidUser(known?.jid) ? known.jid : null;
   }
 
   /**
