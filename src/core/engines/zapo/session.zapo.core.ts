@@ -98,7 +98,7 @@ import {
 } from '@waha/structures/enums.dto';
 import { ContactQuery, ContactRequest } from '@waha/structures/contacts.dto';
 import { BinaryFile, RemoteFile } from '@waha/structures/files.dto';
-import { MessageSource, WAMessage } from '@waha/structures/responses.dto';
+import { WAMessage } from '@waha/structures/responses.dto';
 import type { Agent } from 'https';
 import { merge, Subject } from 'rxjs';
 import { filter, map, mergeMap, share } from 'rxjs/operators';
@@ -398,6 +398,16 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     if (downloadMedia) {
       message.media = await this.downloadMediaSafe(event);
     }
+    // The quoted message carries its own media, and the Chatwoot app reads it
+    // from replyTo.media - left undownloaded it is always null there.
+    if (downloadMedia && message.replyTo?.hasMedia) {
+      const quoted = {
+        key: { ...event.key, id: message.replyTo.id ?? event.key.id },
+        message: message.replyTo._data,
+        rawNode: event.rawNode,
+      } as unknown as WaIncomingMessageEvent;
+      message.replyTo.media = await this.downloadMediaSafe(quoted);
+    }
     return message;
   }
 
@@ -420,7 +430,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       timestamp: event.timestampSeconds ?? Math.floor(Date.now() / SECOND),
       from: chatId,
       fromMe: Boolean(key.fromMe),
-      source: MessageSource.APP,
+      source: this.getMessageSource(key.id),
       body: extractBody(content) || null,
       // In groups the sender is the participant; in 1:1 it is the chat itself.
       to: key.fromMe ? chatId : me?.id ?? '',
@@ -516,8 +526,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       timestamp: Math.floor(Date.now() / SECOND),
       from: chatId,
       fromMe: true,
-      // Sent through the API, which is what distinguishes it from the phone.
-      source: MessageSource.API,
+      source: this.getMessageSource(event.id),
       body: extractBody(content) || null,
       to: chatId,
       participant: null,
@@ -933,7 +942,16 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     const threads = this.storage.store.session(this.name).threads;
     const chats: ChatSummary[] = [];
     for (const entry of indexed) {
-      const thread = await threads.getByJid(entry.id);
+      // The index is keyed by the phone identity while the library keeps its
+      // threads under whichever jid addressed them, so both are tried.
+      const jids = await this.resolveThreadJids(entry.id);
+      let thread: WaStoredThreadRecord = null;
+      for (const jid of jids) {
+        thread = await threads.getByJid(jid);
+        if (thread) {
+          break;
+        }
+      }
       chats.push(
         this.toChatSummary(thread ?? { jid: entry.id, name: entry.name }),
       );
@@ -982,7 +1000,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
           false,
         );
         await this.storage.chats.touch(
-          thread.jid,
+          await this.canonicalChatJid(thread.jid),
           last[0]?.timestampMs ?? 0,
           thread.name,
         );
@@ -1022,6 +1040,11 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     try {
       const canonical = await this.canonicalChatJid(jid);
       await this.storage.chats.touch(canonical, timestampMs);
+      if (canonical !== jid) {
+        // A row indexed under the other identity by an earlier build would
+        // keep listing the same chat a second time.
+        await this.storage.chats.remove(jid);
+      }
     } catch (error) {
       this.logger.warn({ error: error }, 'Failed to index a chat');
     }
@@ -1776,6 +1799,8 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
    * feeding it into react/edit/delete parses into an empty key.
    */
   private toSentMessage(chatId: string, result: WaMessagePublishResult): any {
+    // Remembered so a message read back from history still reports 'api'.
+    this.saveSentMessageId(result?.id);
     return {
       id: buildMessageId({
         id: result?.id,
