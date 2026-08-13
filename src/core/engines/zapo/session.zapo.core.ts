@@ -23,6 +23,9 @@ import {
 import { NotImplementedByEngineError } from '@waha/core/exceptions';
 import { extractBody } from '@waha/core/engines/noweb/session.noweb.core';
 import { extractMediaContent } from '@waha/core/engines/noweb/utils';
+import { extractWALocation } from '@waha/core/engines/waproto/locaiton';
+import { extractVCards } from '@waha/core/engines/waproto/vcards';
+import { getContextInfo } from '@waha/core/utils/pwa';
 import { createAgentProxy } from '@waha/core/helpers.proxy';
 import { IMediaEngineProcessor } from '@waha/core/media/IMediaEngineProcessor';
 import { QR } from '@waha/core/QR';
@@ -95,7 +98,7 @@ import {
 } from '@waha/structures/enums.dto';
 import { ContactQuery, ContactRequest } from '@waha/structures/contacts.dto';
 import { BinaryFile, RemoteFile } from '@waha/structures/files.dto';
-import { WAMessage } from '@waha/structures/responses.dto';
+import { MessageSource, WAMessage } from '@waha/structures/responses.dto';
 import type { Agent } from 'https';
 import { merge, Subject } from 'rxjs';
 import { filter, map, mergeMap, share } from 'rxjs/operators';
@@ -398,6 +401,11 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     return message;
   }
 
+  /**
+   * The same shape the other protocol engines return - GOWS and NOWEB build
+   * an identical payload, and an integration written against one has to work
+   * against this engine too.
+   */
   private toWAMessage(event: WaIncomingMessageEvent): WAMessage | null {
     const key = event.key;
     if (!key?.remoteJid) {
@@ -405,22 +413,48 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     }
     const chatId = toCusFormat(key.remoteJid);
     const me = this.getSessionMeInfo();
-    const body = extractBody(event.message) ?? '';
+    const content: any = event.message;
+    const mediaContent = extractMediaContent(content);
     return {
       id: buildMessageId(key),
-      timestamp: event.timestampSeconds ?? Math.floor(Date.now() / 1000),
+      timestamp: event.timestampSeconds ?? Math.floor(Date.now() / SECOND),
       from: chatId,
       fromMe: Boolean(key.fromMe),
+      source: MessageSource.APP,
+      body: extractBody(content) || null,
       // In groups the sender is the participant; in 1:1 it is the chat itself.
-      participant: key.participant ? toCusFormat(key.participant) : undefined,
       to: key.fromMe ? chatId : me?.id ?? '',
-      body: body,
-      hasMedia: Boolean(extractMediaContent(event.message)),
+      participant: key.participant ? toCusFormat(key.participant) : null,
+      hasMedia: Boolean(mediaContent),
+      media: null,
+      mediaUrl: undefined,
       ack: WAMessageAck.SERVER,
-      ackName: 'SERVER',
-      replyTo: undefined,
+      ackName: WAMessageAck[WAMessageAck.SERVER],
+      location: extractWALocation(content),
+      vCards: extractVCards(content),
+      replyTo: this.extractReplyTo(content),
       _data: event,
     } as WAMessage;
+  }
+
+  /** Quoted message, in the shape the other engines expose it. */
+  protected extractReplyTo(message: any) {
+    if (!message) {
+      return null;
+    }
+    const contextInfo = getContextInfo(message);
+    const quoted = contextInfo?.quotedMessage;
+    if (!quoted) {
+      return null;
+    }
+    return {
+      id: contextInfo.stanzaId,
+      participant: toCusFormat(contextInfo.participant),
+      body: extractBody(quoted),
+      hasMedia: Boolean(extractMediaContent(quoted)),
+      media: null,
+      _data: quoted,
+    };
   }
 
   /**
@@ -476,16 +510,25 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
 
   private toOutgoingWAMessage(event: any): WAMessage {
     const chatId = toCusFormat(event.to);
+    const content: any = event.message;
     return {
       id: buildMessageId({ id: event.id, fromMe: true, remoteJid: event.to }),
       timestamp: Math.floor(Date.now() / SECOND),
       from: chatId,
       fromMe: true,
+      // Sent through the API, which is what distinguishes it from the phone.
+      source: MessageSource.API,
+      body: extractBody(content) || null,
       to: chatId,
-      body: extractBody(event.message) ?? '',
-      hasMedia: Boolean(extractMediaContent(event.message)),
+      participant: null,
+      hasMedia: Boolean(extractMediaContent(content)),
+      media: null,
+      mediaUrl: undefined,
       ack: WAMessageAck.PENDING,
       ackName: WAMessageAck[WAMessageAck.PENDING],
+      location: extractWALocation(content),
+      vCards: extractVCards(content),
+      replyTo: this.extractReplyTo(content),
       _data: event,
     } as WAMessage;
   }
@@ -965,16 +1008,35 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     return this.toChatSummary({ jid: jid, name: indexed.name });
   }
 
-  /** Records that a conversation had activity, so the list can be ordered. */
+  /**
+   * Records that a conversation had activity, so the list can be ordered.
+   *
+   * Indexed under one identity per conversation: the same chat is addressed
+   * by @lid and by phone depending on the stanza, and indexing both would
+   * list it twice - which is exactly what the chat list must not do.
+   */
   private async touchChat(jid: string | undefined, timestampMs: number) {
     if (!jid) {
       return;
     }
     try {
-      await this.storage.chats.touch(jid, timestampMs);
+      const canonical = await this.canonicalChatJid(jid);
+      await this.storage.chats.touch(canonical, timestampMs);
     } catch (error) {
       this.logger.warn({ error: error }, 'Failed to index a chat');
     }
+  }
+
+  /**
+   * The phone-addressed identity when it is known, which is the one WAHA
+   * exposes as the chat id; otherwise the jid as it came.
+   */
+  private async canonicalChatJid(jid: string): Promise<string> {
+    if (isJidGroup(jid) || isJidNewsletter(jid) || !isLidUser(jid)) {
+      return jid;
+    }
+    const contact = await this.storage.contacts.getByJid(jid);
+    return contact?.phoneNumber || jid;
   }
 
   /**
