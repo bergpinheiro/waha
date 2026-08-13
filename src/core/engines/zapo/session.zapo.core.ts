@@ -36,10 +36,17 @@ import {
   WANumberExistResult,
 } from '@waha/structures/chatting.dto';
 import {
+  ChatSummary,
+  GetChatMessageQuery,
+  GetChatMessagesFilter,
+  GetChatMessagesQuery,
+  OverviewFilter,
   ReadChatMessagesQuery,
   ReadChatMessagesResponse,
 } from '@waha/structures/chats.dto';
+import { PaginationParams } from '@waha/structures/pagination.dto';
 import {
+  SECOND,
   WAHAEngine,
   WAHAEvents,
   WAHASessionStatus,
@@ -54,6 +61,8 @@ import {
   WaClient,
   WaIncomingMessageEvent,
   WaMessageKey,
+  WaStoredMessageRecord,
+  WaStoredThreadRecord,
   WaMessagePublishResult,
   WaSendMessageContent,
   WaStore,
@@ -621,6 +630,163 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       selectedOptionNames: request.votes,
     });
     return this.toSentMessage(jid, result);
+  }
+
+  @Activity()
+  async chatsArchiveChat(chatId: string): Promise<any> {
+    await this.client.chat.setChatArchive(toJID(chatId), true);
+  }
+
+  @Activity()
+  async chatsUnarchiveChat(chatId: string): Promise<any> {
+    await this.client.chat.setChatArchive(toJID(chatId), false);
+  }
+
+  @Activity()
+  async chatsUnreadChat(chatId: string): Promise<any> {
+    await this.client.chat.setChatRead(toJID(chatId), false);
+  }
+
+  @Activity()
+  async deleteChat(chatId: string) {
+    await this.client.chat.deleteChat(toJID(chatId));
+  }
+
+  @Activity()
+  async clearMessages(chatId: string) {
+    await this.client.chat.clearChat(toJID(chatId));
+  }
+
+  /**
+   * Chats and messages are read from the store the library fills as the
+   * session runs, so they only cover what this session has seen.
+   */
+  async getChats(pagination: PaginationParams) {
+    const threads = await this.store
+      .session(this.name)
+      .threads.list(pagination?.limit);
+    return threads.map((thread) => this.toChatSummary(thread));
+  }
+
+  async getChatsOverview(
+    pagination: PaginationParams,
+    filter?: OverviewFilter,
+  ): Promise<ChatSummary[]> {
+    const chats = await this.getChats(pagination);
+    const ids = filter?.ids?.map((id) => toJID(id));
+    const selected = ids
+      ? chats.filter((chat) => ids.includes(toJID(chat.id)))
+      : chats;
+    for (const chat of selected) {
+      chat.lastMessage = await this.getLastMessage(chat.id);
+    }
+    return selected;
+  }
+
+  async getChatMessages(
+    chatId: string,
+    query: GetChatMessagesQuery,
+    filter: GetChatMessagesFilter,
+  ): Promise<WAMessage[]> {
+    const records = await this.store
+      .session(this.name)
+      .messages.listByThread(
+        toJID(chatId),
+        query?.limit,
+        filter?.['filter.timestamp.lte']
+          ? filter['filter.timestamp.lte'] * SECOND
+          : undefined,
+      );
+    const messages: WAMessage[] = [];
+    for (const record of records) {
+      const message = await this.storedToWAMessage(
+        record,
+        query?.downloadMedia ?? true,
+      );
+      if (message) {
+        messages.push(message);
+      }
+    }
+    return this.applyMessageFilter(messages, filter);
+  }
+
+  async getChatMessage(
+    chatId: string,
+    messageId: string,
+    query: GetChatMessageQuery,
+  ): Promise<null | WAMessage> {
+    const key = toZapoKey(messageId, chatId);
+    const record = await this.store.session(this.name).messages.getById(key.id);
+    if (!record) {
+      return null;
+    }
+    return this.storedToWAMessage(record, query?.downloadMedia ?? true);
+  }
+
+  private async getLastMessage(chatId: string) {
+    const records = await this.store
+      .session(this.name)
+      .messages.listByThread(toJID(chatId), 1);
+    if (!records.length) {
+      return null;
+    }
+    return this.storedToWAMessage(records[0], false);
+  }
+
+  private toChatSummary(thread: WaStoredThreadRecord): ChatSummary {
+    return {
+      id: toCusFormat(thread.jid),
+      name: thread.name ?? null,
+      picture: null,
+      lastMessage: null,
+      _chat: thread,
+    };
+  }
+
+  /**
+   * Rebuilds a webhook-shaped message from what the store kept. The store
+   * holds the raw proto, so the same converter as the live path is reused by
+   * rebuilding the event around it.
+   */
+  private async storedToWAMessage(
+    record: WaStoredMessageRecord,
+    downloadMedia: boolean,
+  ): Promise<WAMessage | null> {
+    if (!record.messageBytes) {
+      return null;
+    }
+    const event = {
+      key: {
+        remoteJid: record.threadJid,
+        id: record.id,
+        fromMe: record.fromMe,
+        participant: record.participantJid,
+      },
+      message: proto.Message.decode(record.messageBytes),
+      timestampSeconds: record.timestampMs
+        ? Math.floor(record.timestampMs / SECOND)
+        : undefined,
+    } as unknown as WaIncomingMessageEvent;
+    return this.processIncomingMessage(event, downloadMedia);
+  }
+
+  private applyMessageFilter(
+    messages: WAMessage[],
+    filter: GetChatMessagesFilter,
+  ): WAMessage[] {
+    if (!filter) {
+      return messages;
+    }
+    let result = messages;
+    const fromMe = filter['filter.fromMe'];
+    if (fromMe !== undefined) {
+      result = result.filter((message) => message.fromMe === fromMe);
+    }
+    const gte = filter['filter.timestamp.gte'];
+    if (gte !== undefined) {
+      result = result.filter((message) => message.timestamp >= gte);
+    }
+    return result;
   }
 
   async readChatMessages(
