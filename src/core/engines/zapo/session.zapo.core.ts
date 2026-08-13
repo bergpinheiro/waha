@@ -48,7 +48,13 @@ import {
 } from '@waha/core/utils/jids';
 import { PairingCodeResponse } from '@waha/structures/auth.dto';
 import { MeInfo } from '@waha/structures/sessions.dto';
-import { DeleteStatusRequest, TextStatus } from '@waha/structures/status.dto';
+import {
+  DeleteStatusRequest,
+  ImageStatus,
+  TextStatus,
+  VideoStatus,
+  VoiceStatus,
+} from '@waha/structures/status.dto';
 import {
   Channel,
   ChannelRole,
@@ -185,6 +191,13 @@ const MEDIA_PROCESSOR = createMediaProcessor();
 /** Upper bound for the one-off backfill of the chat index. */
 const CHAT_INDEX_SEED_MAX = 1000;
 
+/**
+ * WhatsApp nacks every status publish from this library with `error=400`,
+ * whatever the content or recipients - reproduced with zapo-js alone, no WAHA
+ * in the path, using the shape its own guide documents. The four status
+ * methods below call the right API and are left in place, but they do not
+ * work on zapo-js@1.7.1; nothing else in the engine is affected.
+ */
 export class WhatsappSessionZapoCore extends WhatsappSession {
   engine = WAHAEngine.ZAPO;
 
@@ -1427,16 +1440,13 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     await this.client.privacy.unblockUser(toJID(request.contactId));
   }
 
-  /**
-   * Status updates need an explicit recipient list. The other engines fall
-   * back to "everyone in my contacts", which this engine cannot do: the
-   * contact store has no enumeration (see getContacts).
-   */
   @Activity()
   async sendTextStatus(status: TextStatus) {
-    const recipients = this.requireStatusRecipients(status.contacts);
-    // The typed text content carries no styling, so the styled status goes
-    // through the raw proto, which the send builder also accepts.
+    const recipients = await this.resolveStatusRecipients(status.contacts);
+    // The documented form for a plain status is the bare string, but the
+    // typed text content carries no background or font, and this API exposes
+    // both - so the styled status goes through the raw proto the builder also
+    // accepts. Both forms are nacked today (see the note on the class).
     return this.client.status.send({
       content: {
         extendedTextMessage: {
@@ -1450,21 +1460,70 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   }
 
   @Activity()
+  async sendImageStatus(status: ImageStatus) {
+    return this.sendMediaStatus(status, {
+      type: 'image',
+      ...(await this.fileToMedia(status.file)),
+      caption: status.caption,
+    });
+  }
+
+  /**
+   * `convert` is honoured by the media processor, which normalizes a voice
+   * note to the codec WhatsApp expects when ffmpeg is available.
+   */
+  @Activity()
+  async sendVoiceStatus(status: VoiceStatus) {
+    return this.sendMediaStatus(status, {
+      type: 'audio',
+      ...(await this.fileToMedia(status.file)),
+      ptt: true,
+      backgroundArgb: hexColorToArgb(status.backgroundColor),
+    });
+  }
+
+  @Activity()
+  async sendVideoStatus(status: VideoStatus) {
+    return this.sendMediaStatus(status, {
+      type: 'video',
+      ...(await this.fileToMedia(status.file)),
+      caption: status.caption,
+    });
+  }
+
+  private async sendMediaStatus(status: { contacts?: string[] }, content: any) {
+    const recipients = await this.resolveStatusRecipients(status.contacts);
+    return this.client.status.send({
+      content: content as WaSendMessageContent,
+      recipients: recipients,
+    });
+  }
+
+  @Activity()
   async deleteStatus(request: DeleteStatusRequest) {
-    const recipients = this.requireStatusRecipients(request.contacts);
+    const recipients = await this.resolveStatusRecipients(request.contacts);
     await this.client.status.revokeStatus({
       messageId: request.id,
       recipients: recipients,
     });
   }
 
-  private requireStatusRecipients(contacts?: string[]): string[] {
-    if (!contacts?.length) {
-      throw new UnprocessableEntityException(
-        'Provide "contacts" - this engine cannot resolve the full contact list.',
-      );
-    }
-    return contacts.map((contact) => toJID(contact));
+  /**
+   * Recipients for a status. Without an explicit list it goes to every known
+   * contact, which is what the other engines do - the WAHA-backed contact
+   * store is what makes that possible here.
+   */
+  private async resolveStatusRecipients(
+    contacts?: string[],
+  ): Promise<string[]> {
+    const known = contacts?.length
+      ? contacts.map((contact) => toJID(contact))
+      : (await this.storage.contacts.list())
+          .map((contact) => contact.phoneNumber || contact.jid)
+          .filter((jid) => jid?.endsWith('@s.whatsapp.net'));
+    // The library adds the account itself and defaults the distribution
+    // setting, so neither is repeated here.
+    return [...new Set(known)];
   }
 
   /**
