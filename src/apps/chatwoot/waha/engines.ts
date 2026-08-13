@@ -186,6 +186,74 @@ class GOWSHelper implements IEngineHelper {
   }
 }
 
+class ZAPOHelper implements IEngineHelper {
+  ChatID(message: WAMessage): string {
+    return message.from;
+  }
+
+  /**
+   * The incoming key carries the counterpart address: when the chat is
+   * addressed by @lid, remoteJidAlt holds the phone number (and the other way
+   * round). No extra resolution query is needed.
+   */
+  PhoneNumber(message: WAMessage | any): string | null {
+    const key = message._data?.key;
+    if (!key) {
+      return null;
+    }
+    const alt = key.fromMe
+      ? key.remoteJidAlt
+      : key.participantAlt ?? key.remoteJidAlt;
+    return pnChatIdOrNull(alt);
+  }
+
+  CallChatID(call: CallData): string {
+    return call.from;
+  }
+
+  IsReplyToStatus(
+    message: WAMessage,
+    protoMessage: proto.Message | null,
+  ): boolean {
+    void message;
+    return getContextInfo(protoMessage)?.remoteJid === Jid.BROADCAST;
+  }
+
+  WhatsAppMessageKeys(message: any): WhatsAppMessage {
+    const key = message.key ?? message._data?.key ?? {};
+    const seconds = message.timestampSeconds ?? message.timestamp;
+    return {
+      timestamp: new Date(seconds * 1000),
+      from_me: key.fromMe,
+      chat_id: toCusFormat(key.remoteJid),
+      message_id: key.id,
+      participant: key.participant,
+    };
+  }
+
+  IterateMessages<T extends { timestamp: number }>(
+    messages: AsyncGenerator<T>,
+  ): AsyncGenerator<T> {
+    return messages;
+  }
+
+  FilterChatIdsForMessages(chats: string[]): string[] {
+    return preferPnChats(chats);
+  }
+
+  ContactIsMy(contact) {
+    return true;
+  }
+
+  SupportsAllChatForMessage(): boolean {
+    return true;
+  }
+
+  ExtractQuotedMedia(replyData: any): QuotedMedia | null {
+    return extractProtoQuotedMedia(replyData);
+  }
+}
+
 class WEBJSHelper implements IEngineHelper {
   ChatID(message: WAMessage): string {
     return message._data?.id?.remote || message.from;
@@ -342,6 +410,9 @@ switch (getEngineName()) {
     break;
   case WAHAEngine.WEBJS:
     engineHelper = new WEBJSHelper();
+    break;
+  case WAHAEngine.ZAPO:
+    engineHelper = new ZAPOHelper();
     break;
   case WAHAEngine.WPP:
     engineHelper = new WPPHelper();
