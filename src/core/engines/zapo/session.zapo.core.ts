@@ -10,6 +10,9 @@ import {
   decryptAddon,
   keyAuthor,
   MESSAGE_EDIT_MODIFICATION_TYPE,
+  POLL_VOTE_MODIFICATION_TYPE,
+  toNonAdJid,
+  toSelectedOptionNames,
 } from '@waha/core/engines/zapo/addon-crypto';
 import {
   buildMessageId,
@@ -517,7 +520,21 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
 
     // A vote whose options could not be resolved is reported as failed rather
     // than dropped, which is what the poll.vote.failed event is for.
-    const votes$ = addons$.pipe(filter((event) => event.kind === 'poll_vote'));
+    // A vote on a poll this account sent never decrypts on the library's own
+    // path, for the same reason an edit of ours does not: it derives the key
+    // from the wrong sender. Those are decrypted here, so the two sources are
+    // split by whether the library managed it.
+    const ourVotes$ = incoming$.pipe(
+      mergeMap((event) => this.decryptPollVote(event)),
+      filter(Boolean),
+      // partition() below subscribes twice, and without this every vote would
+      // be decrypted - and reported as failed - twice.
+      share(),
+    );
+    const votes$ = merge(
+      addons$.pipe(filter((event) => event.kind === 'poll_vote')),
+      ourVotes$,
+    );
     const [voted$, voteFailed$] = partition(
       votes$,
       (event) => event.decrypted?.selectedOptionNames !== null,
@@ -941,6 +958,125 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     } as WAMessageReaction;
   }
 
+  /**
+   * Decrypts a vote the library could not, which is every vote on a poll this
+   * account sent: it derives the key from the sender stored with the parent,
+   * device suffix and all, where the voter derived it from the plain form.
+   *
+   * Returns null for anything that is not such a vote, and for the ones the
+   * library already handled - those arrive as an addon and are not seen here.
+   */
+  private async decryptPollVote(event: any): Promise<any | null> {
+    const update: any = unwrapMessage(event.message)?.pollUpdateMessage;
+    const targetId = update?.pollCreationMessageKey?.id;
+    if (!targetId || !update.vote?.encPayload || !update.vote?.encIv) {
+      return null;
+    }
+
+    const session = this.storage.store.session(this.name);
+    const entry = await session.messageSecret.get(targetId).catch(() => null);
+    if (!entry?.secret) {
+      return null;
+    }
+
+    const plaintext = decryptAddon({
+      secret: entry.secret,
+      stanzaId: targetId,
+      // The voter, as the vote stanza names them.
+      modificationSenders: this.senderCandidates(event.key),
+      // whatsmeow reads the parent's sender off the poll key the voter wrote,
+      // not off what this side stored - that is the identity they addressed
+      // us by, and the one they derived from. The stored sender follows as a
+      // fallback, with the device suffix stripped, since it carries one.
+      parentSenders: this.senderCandidates(update.pollCreationMessageKey, [
+        entry.senderJid,
+        ...this.ourJids(),
+      ]),
+      modificationType: POLL_VOTE_MODIFICATION_TYPE,
+      iv: update.vote.encIv,
+      ciphertext: update.vote.encPayload,
+      withAdditionalData: true,
+    });
+    if (!plaintext) {
+      this.logger.warn({ targetId: targetId }, 'could not decrypt a poll vote');
+      return null;
+    }
+
+    const vote = proto.Message.PollVoteMessage.decode(plaintext);
+    return {
+      kind: 'poll_vote',
+      key: event.key,
+      timestampSeconds: event.timestampSeconds,
+      targetMessageId: targetId,
+      targetMessageKey: update.pollCreationMessageKey,
+      decrypted: {
+        kind: 'poll_vote',
+        selectedOptionNames: await this.toSelectedOptions(targetId, vote),
+      },
+    };
+  }
+
+  /**
+   * The names a vote picked. A vote names them by hash, so the poll it belongs
+   * to is read back to hash its own options. Null when the poll was never
+   * seen, which is what separates a vote from a failed one.
+   */
+  private async toSelectedOptions(
+    pollId: string,
+    vote: any,
+  ): Promise<string[] | null> {
+    const stored = await this.storage.store
+      .session(this.name)
+      .messages.getById(pollId)
+      .catch(() => null);
+    if (!stored?.messageBytes) {
+      return null;
+    }
+    // Decoded with WAHA's protobuf and unwrapped with the library's helper -
+    // the same message, two generated types, so the boundary is crossed once.
+    const content: any = unwrapMessage(
+      proto.Message.decode(stored.messageBytes) as any,
+    );
+    // Four generations of the poll message are in circulation, and the
+    // library reads the options from any of them.
+    const options =
+      content?.pollCreationMessage?.options ??
+      content?.pollCreationMessageV2?.options ??
+      content?.pollCreationMessageV3?.options ??
+      content?.pollCreationMessageV5?.options;
+    if (!options?.length) {
+      return null;
+    }
+    return toSelectedOptionNames(
+      vote.selectedOptions ?? [],
+      options.map((option: any) => option.optionName),
+    );
+  }
+
+  /**
+   * The identities a key names, in the order to try, each with its device
+   * suffix stripped as well - a derivation uses the plain form, while what
+   * arrives and what was stored may carry one.
+   */
+  private senderCandidates(key: any, extra: string[] = []): string[] {
+    const raw = [
+      key?.participant,
+      key?.participantAlt,
+      key?.remoteJid,
+      key?.remoteJidAlt,
+      ...extra,
+    ].filter(Boolean) as string[];
+    return raw.flatMap((jid) => [jid, toNonAdJid(jid)]);
+  }
+
+  /** Every jid this account answers to, for a derivation that names us. */
+  private ourJids(): string[] {
+    const me = this.getSessionMeInfo();
+    return [me?.lid, me?.jid ? normalizeJid(me.jid) : null].filter(
+      Boolean,
+    ) as string[];
+  }
+
   private toPollVote(event: any) {
     return {
       poll: { id: this.targetMessageId(event) },
@@ -998,19 +1134,21 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       return null;
     }
 
-    const me = this.getSessionMeInfo();
     // An account being migrated to lid reports either identity depending on
     // the stanza, and the secret was stored under whichever one arrived
     // first, so every form this account answers to is a candidate.
-    const ours = [me?.lid, me?.jid ? normalizeJid(me.jid) : null].filter(
-      Boolean,
-    );
-    const author = keyAuthor(event.key, ours[0] as string);
+    const ours = this.ourJids();
+    const author = keyAuthor(event.key, ours[0]);
     const plaintext = decryptAddon({
       secret: entry.secret,
       stanzaId: targetId,
-      modificationSender: author,
-      parentSenders: [...ours, entry.senderJid],
+      modificationSenders: [author, toNonAdJid(author)],
+      parentSenders: [
+        ...ours,
+        ...ours.map(toNonAdJid),
+        entry.senderJid,
+        toNonAdJid(entry.senderJid),
+      ],
       modificationType: MESSAGE_EDIT_MODIFICATION_TYPE,
       iv: envelope.encIv,
       ciphertext: envelope.encPayload,
@@ -1285,11 +1423,19 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   /** The message an addon points at, in the id form the API accepts back. */
   private targetMessageId(event: any): string {
     const key = event.key ?? {};
+    // When the stanza named the target - which it does whenever this engine
+    // decrypted the addon itself - the id is read off that key, so a vote on
+    // a poll this account sent points at the poll rather than at a message
+    // that does not exist.
+    if (event.targetMessageKey) {
+      return toTargetMessageId(key, event.targetMessageKey, this.ourChatIds());
+    }
     return buildMessageId({
       id: event.targetMessageId,
-      // An addon always targets a message in the same chat; whose it is comes
-      // from the addon's own direction only for a self-reaction, so the target
-      // keeps the chat and lets the id carry the rest.
+      // The library drops the target's own key and only reports its id, so
+      // whose it is can only be taken from the addon's own direction. That
+      // holds for an edit, which only its author can make, and is an
+      // approximation for the rest.
       fromMe: key.fromMe,
       remoteJid: key.remoteJid,
       participant: key.participant,

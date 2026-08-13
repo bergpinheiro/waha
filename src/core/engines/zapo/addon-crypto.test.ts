@@ -1,10 +1,13 @@
 import {
+  buildAddonAdditionalData,
   decryptAddon,
   deriveAddonKey,
   keyAuthor,
   MESSAGE_EDIT_MODIFICATION_TYPE,
+  toNonAdJid,
+  toSelectedOptionNames,
 } from '@waha/core/engines/zapo/addon-crypto';
-import { createCipheriv, randomBytes } from 'crypto';
+import { createCipheriv, createHash, randomBytes } from 'crypto';
 
 const ME = '558540423147@s.whatsapp.net';
 const ME_LID = '72318944542853@lid';
@@ -71,7 +74,7 @@ describe('ZAPO addon crypto', () => {
       const decrypted = decryptAddon({
         secret: secret,
         stanzaId: STANZA,
-        modificationSender: ME_LID,
+        modificationSenders: [ME_LID],
         parentSenders: [ME_LID],
         modificationType: MESSAGE_EDIT_MODIFICATION_TYPE,
         iv: iv,
@@ -87,7 +90,7 @@ describe('ZAPO addon crypto', () => {
       const decrypted = decryptAddon({
         secret: secret,
         stanzaId: STANZA,
-        modificationSender: PEER,
+        modificationSenders: [PEER],
         parentSenders: [ME_LID],
         modificationType: MESSAGE_EDIT_MODIFICATION_TYPE,
         iv: iv,
@@ -103,7 +106,7 @@ describe('ZAPO addon crypto', () => {
       const decrypted = decryptAddon({
         secret: secret,
         stanzaId: STANZA,
-        modificationSender: ME_LID,
+        modificationSenders: [ME_LID],
         parentSenders: [ME_LID, ME],
         modificationType: MESSAGE_EDIT_MODIFICATION_TYPE,
         iv: iv,
@@ -117,7 +120,7 @@ describe('ZAPO addon crypto', () => {
       const decrypted = decryptAddon({
         secret: secret,
         stanzaId: STANZA,
-        modificationSender: ME_LID,
+        modificationSenders: [ME_LID],
         parentSenders: [PEER],
         modificationType: MESSAGE_EDIT_MODIFICATION_TYPE,
         iv: iv,
@@ -130,7 +133,7 @@ describe('ZAPO addon crypto', () => {
       const decrypted = decryptAddon({
         secret: secret,
         stanzaId: STANZA,
-        modificationSender: ME_LID,
+        modificationSenders: [ME_LID],
         parentSenders: [ME_LID],
         modificationType: MESSAGE_EDIT_MODIFICATION_TYPE,
         iv: randomBytes(12),
@@ -157,6 +160,78 @@ describe('ZAPO addon crypto', () => {
         deriveAddonKey(secret, STANZA, ME, PEER, 'Enc Reaction'),
       ).not.toEqual(base);
       expect(base).toHaveLength(32);
+    });
+  });
+
+  describe('toSelectedOptionNames', () => {
+    const hash = (name: string) =>
+      createHash('sha256').update(name).digest();
+
+    it('reads the picked options back from their hashes', () => {
+      expect(toSelectedOptionNames([hash('B')], ['A', 'B'])).toEqual(['B']);
+    });
+
+    // The library answers null for the whole vote when one option does not
+    // match, and null is what tells poll.vote.failed from poll.vote - a
+    // partial list would report a half-read vote as a good one.
+    it('answers null when any option is unknown', () => {
+      expect(toSelectedOptionNames([hash('B'), hash('Z')], ['A', 'B'])).toBeNull();
+    });
+
+    it('answers an empty list for a vote that picked nothing', () => {
+      expect(toSelectedOptionNames([], ['A'])).toEqual([]);
+    });
+  });
+
+  describe('buildAddonAdditionalData', () => {
+    // whatsmeow joins the two with a NUL; any other separator authenticates
+    // nothing.
+    it('joins the id and the sender with a NUL', () => {
+      const aad = buildAddonAdditionalData('AAA', '1@s.whatsapp.net');
+      expect(aad.toString()).toEqual('AAA\u00001@s.whatsapp.net');
+      expect(aad).toContain(0);
+    });
+  });
+
+  describe('toNonAdJid', () => {
+    it('drops the device suffix', () => {
+      expect(toNonAdJid('558540423147:70@s.whatsapp.net')).toEqual(
+        '558540423147@s.whatsapp.net',
+      );
+    });
+
+    it('leaves a jid without one alone', () => {
+      expect(toNonAdJid('72318944542853@lid')).toEqual('72318944542853@lid');
+      expect(toNonAdJid('')).toEqual('');
+    });
+  });
+
+  describe('decryptAddon with additional data', () => {
+    it('needs the same additional data that was bound in', () => {
+      const secret = randomBytes(32);
+      const key = deriveAddonKey(secret, STANZA, ME, PEER, 'Poll Vote');
+      const iv = randomBytes(12);
+      const aad = buildAddonAdditionalData(STANZA, PEER);
+      const cipher = createCipheriv('aes-256-gcm', key, iv);
+      cipher.setAAD(aad);
+      const body = Buffer.concat([cipher.update(Buffer.from('voto')), cipher.final()]);
+      const ciphertext = Buffer.concat([body, cipher.getAuthTag()]);
+
+      const input = {
+        secret: secret,
+        stanzaId: STANZA,
+        modificationSenders: [PEER],
+        parentSenders: [ME],
+        modificationType: 'Poll Vote',
+        iv: iv,
+        ciphertext: ciphertext,
+      };
+      expect(
+        decryptAddon({ ...input, withAdditionalData: true })?.toString(),
+      ).toEqual('voto');
+      // Without it the tag never matches, which is why it is not optional for
+      // a poll vote.
+      expect(decryptAddon(input)).toBeNull();
     });
   });
 });

@@ -1,4 +1,4 @@
-import { createDecipheriv, hkdfSync } from 'crypto';
+import { createDecipheriv, createHash, hkdfSync } from 'crypto';
 
 /**
  * Decryption of the encrypted addons the library leaves undecrypted.
@@ -21,8 +21,9 @@ import { createDecipheriv, hkdfSync } from 'crypto';
  * the same four fields, in the same order - so only the identities differ.
  */
 
-/** The label that goes into the derivation, as whatsmeow names it. */
+/** The labels that go into the derivation, as whatsmeow names them. */
 export const MESSAGE_EDIT_MODIFICATION_TYPE = 'Message Edit';
+export const POLL_VOTE_MODIFICATION_TYPE = 'Poll Vote';
 
 const DERIVED_KEY_BYTES = 32;
 const GCM_TAG_BYTES = 16;
@@ -49,7 +50,11 @@ export function keyAuthor(key: any, meJid: string): string {
 export interface AddonDecryptionInput {
   readonly secret: Uint8Array;
   readonly stanzaId: string;
-  readonly modificationSender: string;
+  /**
+   * Who made the modification, in the forms to try. It is bound into the
+   * additional data as well, so the pair has to be built per candidate.
+   */
+  readonly modificationSenders: readonly string[];
   /**
    * The parent's sender, in the order to try. WhatsApp is migrating accounts
    * to lid, so the identity an event reports and the one the secret was stored
@@ -59,6 +64,11 @@ export interface AddonDecryptionInput {
   readonly modificationType: string;
   readonly iv: Uint8Array;
   readonly ciphertext: Uint8Array;
+  /**
+   * Whether the tag binds additional data. whatsmeow builds it only for a poll
+   * vote and an event response; an edit carries none.
+   */
+  readonly withAdditionalData?: boolean;
 }
 
 /**
@@ -66,26 +76,40 @@ export interface AddonDecryptionInput {
  * wrong key rather than an error, so it is reported and not thrown.
  */
 export function decryptAddon(input: AddonDecryptionInput): Buffer | null {
-  if (!input.stanzaId || !input.modificationSender || !input.secret?.length) {
+  if (!input.stanzaId || !input.secret?.length) {
     return null;
   }
-  for (const parentSender of input.parentSenders) {
-    if (!parentSender) {
-      continue;
-    }
-    const key = deriveAddonKey(
-      input.secret,
-      input.stanzaId,
-      parentSender,
-      input.modificationSender,
-      input.modificationType,
-    );
-    const plaintext = gcmDecrypt(key, input.iv, input.ciphertext);
-    if (plaintext) {
-      return plaintext;
+  for (const modificationSender of dedupe(input.modificationSenders)) {
+    // The additional data binds the same sender the key was derived from, so
+    // it is rebuilt for each candidate rather than passed in.
+    const additionalData = input.withAdditionalData
+      ? buildAddonAdditionalData(input.stanzaId, modificationSender)
+      : undefined;
+    for (const parentSender of dedupe(input.parentSenders)) {
+      const key = deriveAddonKey(
+        input.secret,
+        input.stanzaId,
+        parentSender,
+        modificationSender,
+        input.modificationType,
+      );
+      const plaintext = gcmDecrypt(
+        key,
+        input.iv,
+        input.ciphertext,
+        additionalData,
+      );
+      if (plaintext) {
+        return plaintext;
+      }
     }
   }
   return null;
+}
+
+/** The candidates worth trying: non-empty, each one once, order kept. */
+function dedupe(values: readonly string[]): string[] {
+  return [...new Set(values.filter(Boolean))];
 }
 
 /**
@@ -119,6 +143,7 @@ function gcmDecrypt(
   key: Buffer,
   iv: Uint8Array,
   ciphertext: Uint8Array,
+  additionalData?: Uint8Array,
 ): Buffer | null {
   if (ciphertext.length <= GCM_TAG_BYTES) {
     return null;
@@ -126,6 +151,9 @@ function gcmDecrypt(
   const tagOffset = ciphertext.length - GCM_TAG_BYTES;
   try {
     const decipher = createDecipheriv('aes-256-gcm', key, iv);
+    if (additionalData?.length) {
+      decipher.setAAD(additionalData);
+    }
     decipher.setAuthTag(ciphertext.subarray(tagOffset));
     return Buffer.concat([
       decipher.update(ciphertext.subarray(0, tagOffset)),
@@ -134,4 +162,57 @@ function gcmDecrypt(
   } catch {
     return null;
   }
+}
+
+/**
+ * The additional data a poll vote binds into its tag: the two fields joined
+ * by a NUL, the way whatsmeow builds it.
+ */
+export function buildAddonAdditionalData(
+  stanzaId: string,
+  modificationSender: string,
+): Buffer {
+  return Buffer.from(`${stanzaId}\u0000${modificationSender}`);
+}
+
+/**
+ * A vote names the options it picked by the SHA-256 of the option name, so the
+ * poll's own options are hashed to read them back.
+ *
+ * One unmatched option answers null for the whole vote rather than a partial
+ * list, the way the library resolves it: a half-read vote reported as a good
+ * one is worse than one reported as failed.
+ */
+export function toSelectedOptionNames(
+  selectedOptions: readonly Uint8Array[],
+  optionNames: readonly string[],
+): string[] | null {
+  const byHash = new Map<string, string>();
+  for (const name of optionNames) {
+    if (name) {
+      byHash.set(createHash('sha256').update(name).digest('hex'), name);
+    }
+  }
+  const names: string[] = [];
+  for (const option of selectedOptions) {
+    const name = byHash.get(Buffer.from(option).toString('hex'));
+    if (!name) {
+      return null;
+    }
+    names.push(name);
+  }
+  return names;
+}
+
+/**
+ * Strips the device suffix from a jid. whatsmeow derives from the non-AD form
+ * (`ToNonAD`), while the secret this engine reads back was stored with the
+ * device on it, so both forms are tried.
+ */
+export function toNonAdJid(jid: string): string {
+  if (!jid) {
+    return '';
+  }
+  const [user, server] = jid.split('@');
+  return server ? `${user.split(':')[0]}@${server}` : jid;
 }

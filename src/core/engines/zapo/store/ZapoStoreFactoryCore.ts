@@ -53,11 +53,51 @@ function buildStore(
     caches: {},
   };
   const options = {
-    backends: { waha: backend, contacts: contactsBackend },
+    backends: {
+      waha: keepSecretsAcrossRestarts(backend),
+      contacts: contactsBackend,
+    },
     providers: PROVIDERS,
     cacheProviders: CACHE_PROVIDERS,
   } as unknown as WaCreateStoreOptionsStrict<Backend>;
   return createStore(options);
+}
+
+/**
+ * Keeps the message secrets a stopped session had.
+ *
+ * Tearing the store down empties every cache domain, message secrets
+ * included, which is right for the ones that are only a lookup shortcut and
+ * wrong for this one: a secret is the only way to decrypt an addon, so a
+ * restart left every reaction, vote or edit on an earlier message
+ * undecryptable. That defeats pointing the domain at a persistent backend,
+ * which is what the library itself recommends for surviving a restart.
+ *
+ * Only the wholesale clear is held back. Expiry still applies, and logging
+ * out drops the whole session database, so nothing outlives the session.
+ *
+ * The store is a class instance, so it is fronted by a proxy rather than
+ * copied - spreading it would leave its methods behind.
+ */
+function keepSecretsAcrossRestarts(backend: WaStoreBackend): WaStoreBackend {
+  const caches: any = { ...(backend as any).caches };
+  const build = caches?.messageSecret;
+  if (typeof build !== 'function') {
+    return backend;
+  }
+  caches.messageSecret = (...args: any[]) => {
+    const store = build(...args);
+    return new Proxy(store, {
+      get(target: any, property: string | symbol) {
+        if (property === 'clear') {
+          return async () => undefined;
+        }
+        const value = Reflect.get(target, property, target);
+        return typeof value === 'function' ? value.bind(target) : value;
+      },
+    });
+  };
+  return { ...(backend as any), caches: caches } as WaStoreBackend;
 }
 
 function buildSqliteKnex(filePath: string): Knex.Knex {
