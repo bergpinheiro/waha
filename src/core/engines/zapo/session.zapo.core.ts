@@ -44,6 +44,14 @@ import {
   ReadChatMessagesQuery,
   ReadChatMessagesResponse,
 } from '@waha/structures/chats.dto';
+import {
+  CreateGroupRequest,
+  GroupParticipant,
+  GroupParticipantRole,
+  ParticipantsRequest,
+  SettingsMemberAddMode,
+  SettingsSecurityChangeInfo,
+} from '@waha/structures/groups.dto';
 import { PaginationParams } from '@waha/structures/pagination.dto';
 import {
   SECOND,
@@ -63,6 +71,8 @@ import {
   WaClient,
   WaIncomingMessageEvent,
   WaMessageKey,
+  WaGroupMetadata,
+  WaGroupParticipant,
   WaStoredContactRecord,
   WaStoredMessageRecord,
   WaStoredThreadRecord,
@@ -110,6 +120,19 @@ interface EngineEvent {
  * Missing ffmpeg is non-fatal: the affected step is skipped with a warning.
  */
 const MEDIA_PROCESSOR = createMediaProcessor();
+
+/** The participant carries two admin flags rather than a single rank. */
+function toParticipantRole(
+  participant: WaGroupParticipant,
+): GroupParticipantRole {
+  if (participant.isSuperAdmin) {
+    return GroupParticipantRole.SUPERADMIN;
+  }
+  if (participant.isAdmin) {
+    return GroupParticipantRole.ADMIN;
+  }
+  return GroupParticipantRole.PARTICIPANT;
+}
 
 /** Chat-scoped presences map onto chatstates; the rest are account-wide. */
 const WAHA_PRESENCE_TO_CHATSTATE = {
@@ -877,6 +900,171 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   @Activity()
   async unblockContact(request: ContactRequest) {
     await this.client.privacy.unblockUser(toJID(request.contactId));
+  }
+
+  @Activity()
+  async createGroup(request: CreateGroupRequest) {
+    const participants = request.participants.map((p) => toJID(p.id));
+    const metadata = await this.client.group.createGroup(
+      request.name,
+      participants,
+    );
+    return this.toGroup(metadata);
+  }
+
+  @Activity()
+  async getGroups(pagination: PaginationParams): Promise<any> {
+    const groups = await this.client.group.queryAllGroups();
+    const limited = pagination?.limit
+      ? groups.slice(0, pagination.limit)
+      : groups;
+    return limited.map((metadata) => this.toGroup(metadata));
+  }
+
+  @Activity()
+  async getGroup(id: string) {
+    const metadata = await this.client.group.queryGroupMetadata(toJID(id));
+    return this.toGroup(metadata);
+  }
+
+  /**
+   * The library queries the server on every call and keeps its own metadata
+   * cache warm, so there is no separate refresh step to trigger.
+   */
+  async refreshGroups(): Promise<boolean> {
+    return true;
+  }
+
+  @Activity()
+  async joinGroup(code: string): Promise<string> {
+    const metadata = await this.client.group.joinGroupViaInvite(code);
+    return toCusFormat(metadata.jid);
+  }
+
+  @Activity()
+  async joinInfoGroup(code: string): Promise<any> {
+    return this.client.group.queryGroupInviteInfo(code);
+  }
+
+  @Activity()
+  async leaveGroup(id: string) {
+    await this.client.group.leaveGroup([toJID(id)]);
+  }
+
+  @Activity()
+  async getInviteCode(id: string): Promise<string> {
+    return this.client.group.queryInviteCode(toJID(id));
+  }
+
+  @Activity()
+  async revokeInviteCode(id: string): Promise<string> {
+    const result = await this.client.group.revokeInvite(toJID(id));
+    return result?.code;
+  }
+
+  @Activity()
+  async getParticipants(id: string) {
+    return this.getGroupParticipants(id);
+  }
+
+  @Activity()
+  async getGroupParticipants(id: string): Promise<GroupParticipant[]> {
+    const metadata = await this.client.group.queryGroupMetadata(toJID(id));
+    return metadata.participants.map((participant) => ({
+      id: toCusFormat(participant.jid),
+      role: toParticipantRole(participant),
+    }));
+  }
+
+  @Activity()
+  async addParticipants(id: string, request: ParticipantsRequest) {
+    await this.client.group.addParticipants(
+      toJID(id),
+      request.participants.map((p) => toJID(p.id)),
+    );
+  }
+
+  @Activity()
+  async removeParticipants(id: string, request: ParticipantsRequest) {
+    await this.client.group.removeParticipants(
+      toJID(id),
+      request.participants.map((p) => toJID(p.id)),
+    );
+  }
+
+  @Activity()
+  async promoteParticipantsToAdmin(id: string, request: ParticipantsRequest) {
+    await this.client.group.promoteParticipants(
+      toJID(id),
+      request.participants.map((p) => toJID(p.id)),
+    );
+  }
+
+  @Activity()
+  async demoteParticipantsToUser(id: string, request: ParticipantsRequest) {
+    await this.client.group.demoteParticipants(
+      toJID(id),
+      request.participants.map((p) => toJID(p.id)),
+    );
+  }
+
+  @Activity()
+  async setSubject(id: string, subject: string) {
+    await this.client.group.setSubject(toJID(id), subject);
+  }
+
+  @Activity()
+  async setDescription(id: string, description: string) {
+    await this.client.group.setDescription(toJID(id), description);
+  }
+
+  // 'restrict' locks group info to admins; 'announcement' locks messages.
+  // Both are read back from the metadata flags rather than a dedicated query.
+  @Activity()
+  async getInfoAdminsOnly(id: string): Promise<SettingsSecurityChangeInfo> {
+    const metadata = await this.client.group.queryGroupMetadata(toJID(id));
+    return { adminsOnly: metadata.restrict };
+  }
+
+  @Activity()
+  async setInfoAdminsOnly(id: string, value: SettingsSecurityChangeInfo) {
+    await this.client.group.setSetting(toJID(id), 'restrict', value.adminsOnly);
+  }
+
+  @Activity()
+  async getMessagesAdminsOnly(id: string): Promise<SettingsSecurityChangeInfo> {
+    const metadata = await this.client.group.queryGroupMetadata(toJID(id));
+    return { adminsOnly: metadata.announce };
+  }
+
+  @Activity()
+  async setMessagesAdminsOnly(id: string, value: SettingsSecurityChangeInfo) {
+    await this.client.group.setSetting(
+      toJID(id),
+      'announcement',
+      value.adminsOnly,
+    );
+  }
+
+  @Activity()
+  async setMemberAddMode(id: string, value: SettingsMemberAddMode) {
+    const mode = value.membersCanAddNewMember ? 'all_member_add' : 'admin_add';
+    await this.client.group.setMemberAddMode(toJID(id), mode);
+  }
+
+  private toGroup(metadata: WaGroupMetadata) {
+    return {
+      id: toCusFormat(metadata.jid),
+      subject: metadata.subject,
+      description: metadata.desc ?? null,
+      owner: metadata.owner ? toCusFormat(metadata.owner) : null,
+      creation: metadata.creation ?? null,
+      participants: (metadata.participants ?? []).map((participant) => ({
+        id: toCusFormat(participant.jid),
+        role: toParticipantRole(participant),
+      })),
+      _data: metadata,
+    };
   }
 
   @Activity()
