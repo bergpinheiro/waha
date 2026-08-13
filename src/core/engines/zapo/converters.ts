@@ -6,6 +6,7 @@ import { normalizeJid, toCusFormat, toJID } from '@waha/core/utils/jids';
 import { ChannelRole, ChannelRoleFilter } from '@waha/structures/channels.dto';
 import { WAHAPresenceStatus, WAMessageAck } from '@waha/structures/enums.dto';
 import { GroupParticipantRole } from '@waha/structures/groups.dto';
+import { unwrapMessage } from 'zapo-js';
 import type { WaGroupParticipant, WaMessageKey } from 'zapo-js';
 
 /**
@@ -111,4 +112,31 @@ export function matchesChannelRole(
     return true;
   }
   return String(role) === String(filter);
+}
+
+/**
+ * Contents WAHA surfaces through an event of their own rather than as a
+ * message. Letting one through turns a reaction, a vote or an edit into an
+ * empty-bodied `message` webhook and pushes the chat up the list.
+ *
+ * `secretEncryptedMessage` is the envelope of an encrypted addon on an
+ * arbitrary parent - an edit made on the phone arrives like this. When the
+ * library cannot decrypt it, no addon event is emitted at all; the envelope
+ * still has to be dropped, because it never carries a body either.
+ *
+ * The library's own unwrapper runs first so a stanza wrapped in ephemeral or
+ * view-once is judged by what it actually carries.
+ */
+export function hasDedicatedEvent(message: any): boolean {
+  const content: any = message && unwrapMessage(message);
+  if (!content) {
+    return false;
+  }
+  return Boolean(
+    content.reactionMessage ||
+      content.pollUpdateMessage ||
+      content.encEventResponseMessage ||
+      content.protocolMessage ||
+      content.secretEncryptedMessage,
+  );
 }

@@ -8,6 +8,7 @@ import {
 import { ZapoEngineLogger } from '@waha/core/engines/zapo/ZapoEngineLogger';
 import {
   buildMessageId,
+  hasDedicatedEvent,
   hexColorToArgb,
   matchesChannelRole,
   toParticipantRole,
@@ -47,6 +48,9 @@ import {
   toJID,
 } from '@waha/core/utils/jids';
 import { PairingCodeResponse } from '@waha/structures/auth.dto';
+import { CallData } from '@waha/structures/calls.dto';
+import { Label, LabelChatAssociation } from '@waha/structures/labels.dto';
+import { WAHAChatPresences } from '@waha/structures/presence.dto';
 import { MeInfo } from '@waha/structures/sessions.dto';
 import {
   DeleteStatusRequest,
@@ -108,9 +112,9 @@ import {
 } from '@waha/structures/enums.dto';
 import { ContactQuery, ContactRequest } from '@waha/structures/contacts.dto';
 import { BinaryFile, RemoteFile } from '@waha/structures/files.dto';
-import { WAMessage } from '@waha/structures/responses.dto';
+import { WAMessage, WAMessageReaction } from '@waha/structures/responses.dto';
 import type { Agent } from 'https';
-import { merge, Subject } from 'rxjs';
+import { merge, Observable, partition, Subject } from 'rxjs';
 import { filter, map, mergeMap, share } from 'rxjs/operators';
 import {
   WaClient,
@@ -188,6 +192,34 @@ interface EngineEvent {
  */
 const MEDIA_PROCESSOR = createMediaProcessor();
 
+/** protocolMessage.type for a revoke, which is what REVOKE maps to. */
+const REVOKE_PROTOCOL_TYPE = 0;
+
+/**
+ * The library reports one group stream with a wide action set; these are the
+ * subsets each WAHA group event stands for.
+ */
+const GROUP_JOIN_ACTIONS = ['create', 'invite', 'link'];
+const GROUP_LEAVE_ACTIONS = ['delete', 'unlink', 'suspend'];
+const GROUP_PARTICIPANT_ACTIONS = ['add', 'remove', 'promote', 'demote'];
+const GROUP_UPDATE_ACTIONS = [
+  'subject',
+  'description',
+  'restrict',
+  'announce',
+  'ephemeral',
+  'member_add_mode',
+  'membership_approval_mode',
+  'revoke_invite',
+  'modify',
+];
+
+/** Account-wide presence, in the names WAHA reports. */
+const ZAPO_PRESENCE_TO_WAHA = {
+  available: WAHAPresenceStatus.ONLINE,
+  unavailable: WAHAPresenceStatus.OFFLINE,
+};
+
 /** Upper bound for the one-off backfill of the chat index. */
 const CHAT_INDEX_SEED_MAX = 1000;
 
@@ -203,6 +235,12 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   private incoming$: Subject<WaIncomingMessageEvent>;
   private outgoing$: Subject<any>;
   private receipts$: Subject<any>;
+  private addons$: Subject<any>;
+  private presences$: Subject<any>;
+  private groups$: Subject<any>;
+  private mutations$: Subject<any>;
+  private calls$: Subject<any>;
+  private protocol$: Subject<any>;
   private unsubscribes: Array<() => void>;
   /** Set while stop() runs, so its own close is not reported as a failure. */
   private stopping = false;
@@ -214,6 +252,12 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     this.incoming$ = new Subject<WaIncomingMessageEvent>();
     this.outgoing$ = new Subject<any>();
     this.receipts$ = new Subject<any>();
+    this.addons$ = new Subject<any>();
+    this.presences$ = new Subject<any>();
+    this.groups$ = new Subject<any>();
+    this.mutations$ = new Subject<any>();
+    this.calls$ = new Subject<any>();
+    this.protocol$ = new Subject<any>();
     this.unsubscribes = [];
   }
 
@@ -244,6 +288,11 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
         sessionId: this.name,
         proxy: this.buildProxyOptions(),
         media: { processor: MEDIA_PROCESSOR },
+        // A reaction is an encrypted addon keyed by its parent's secret, and
+        // the library only keeps that secret for messages it expects a
+        // follow-up on - polls and events. Without this, reacting to an
+        // ordinary message decrypts to nothing and no event is emitted at all.
+        addons: { persistAllSecrets: true },
       },
       engineLogger,
     );
@@ -346,6 +395,13 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       void this.touchChat(event.to, Date.now());
     });
     this.on('receipt', (event) => this.receipts$.next(event));
+    this.on('message_addon', (event) => this.addons$.next(event));
+    this.on('presence', (event) => this.presences$.next(event));
+    this.on('chatstate', (event) => this.presences$.next(event));
+    this.on('group', (event) => this.groups$.next(event));
+    this.on('mutation', (event) => this.mutations$.next(event));
+    this.on('call', (event) => this.calls$.next(event));
+    this.on('message_protocol', (event) => this.protocol$.next(event));
 
     for (const name of FORWARDED_EVENTS) {
       this.on(name, (data) => {
@@ -382,18 +438,165 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       .switch(messages$.pipe(filter((message) => !message.fromMe)));
     // 'message.any' carries both directions, so what this device sends has to
     // reach it too. The outgoing event carries no key, only the destination
-    // and the stanza id, so the payload is built from those.
+    // and the stanza id, so the payload is built from those - and it needs the
+    // same filter the incoming side applies, since sending a reaction or an
+    // edit emits one of these too.
     const outgoing$ = this.outgoing$
       .asObservable()
-      .pipe(map((event) => this.toOutgoingWAMessage(event)));
+      .pipe(
+        filter((event) => !hasDedicatedEvent(event.message)),
+        map((event) => this.toOutgoingWAMessage(event)),
+      );
     this.events2
       .get(WAHAEvents.MESSAGE_ANY)
       .switch(merge(messages$, outgoing$));
 
+    // A receipt names the chat, so group acks split off the contact ones the
+    // same way the other engines split them.
     const acks$ = this.receipts$
       .asObservable()
       .pipe(mergeMap((event) => this.toMessageAcks(event)));
-    this.events2.get(WAHAEvents.MESSAGE_ACK).switch(acks$);
+    const [groupAcks$, contactAcks$] = partition(acks$, (ack) =>
+      isJidGroup(toJID(ack.from)),
+    );
+    this.events2.get(WAHAEvents.MESSAGE_ACK).switch(contactAcks$);
+    this.events2.get(WAHAEvents.MESSAGE_ACK_GROUP).switch(groupAcks$);
+
+    // Addons are the encrypted follow-ups to a message: a reaction, a vote, an
+    // answer to an event, an edit. Each has its own WAHA event.
+    const addons$ = this.addons$.asObservable();
+    // A reaction reaches us two ways: as a plain message carrying
+    // reactionMessage, which is what an ordinary chat sends, and as an
+    // encrypted addon when the parent needs one. Both feed the same event -
+    // the message form is the one the other protocol engines filter for.
+    const reactions$ = merge(
+      incoming$.pipe(
+        filter((event: any) => Boolean(event.message?.reactionMessage)),
+        map((event) => this.toMessageReactionFromMessage(event)),
+      ),
+      addons$.pipe(
+        filter((event) => event.kind === 'reaction'),
+        map((event) => this.toMessageReaction(event)),
+      ),
+    ).pipe(filter(Boolean));
+    this.events2.get(WAHAEvents.MESSAGE_REACTION).switch(reactions$);
+
+    // A vote whose options could not be resolved is reported as failed rather
+    // than dropped, which is what the poll.vote.failed event is for.
+    const votes$ = addons$.pipe(filter((event) => event.kind === 'poll_vote'));
+    const [voted$, voteFailed$] = partition(
+      votes$,
+      (event) => event.decrypted?.selectedOptionNames !== null,
+    );
+    this.events2
+      .get(WAHAEvents.POLL_VOTE)
+      .switch(voted$.pipe(map((event) => this.toPollVote(event))));
+    this.events2
+      .get(WAHAEvents.POLL_VOTE_FAILED)
+      .switch(voteFailed$.pipe(map((event) => this.toPollVote(event))));
+
+    const responses$ = addons$.pipe(
+      filter((event) => event.kind === 'event_response'),
+    );
+    const [responded$, responseFailed$] = partition(responses$, (event) =>
+      Boolean(event.decrypted?.eventResponse),
+    );
+    this.events2
+      .get(WAHAEvents.EVENT_RESPONSE)
+      .switch(responded$.pipe(map((event) => this.toEventResponse(event))));
+    this.events2
+      .get(WAHAEvents.EVENT_RESPONSE_FAILED)
+      .switch(
+        responseFailed$.pipe(map((event) => this.toEventResponse(event))),
+      );
+
+    this.events2.get(WAHAEvents.MESSAGE_EDITED).switch(
+      addons$.pipe(
+        filter((event) => event.kind === 'message_edit'),
+        map((event) => this.toMessageEdited(event)),
+        filter(Boolean),
+      ),
+    );
+
+    this.events2
+      .get(WAHAEvents.PRESENCE_UPDATE)
+      .switch(
+        this.presences$
+          .asObservable()
+          .pipe(map((event) => this.toChatPresences(event))),
+      );
+
+    // One group stream, split by what the action means to WAHA: joining and
+    // leaving are about this account, the rest is metadata or membership.
+    const groups$ = this.groups$.asObservable();
+    this.events2
+      .get(WAHAEvents.GROUP_V2_JOIN)
+      .switch(this.groupEvents(groups$, GROUP_JOIN_ACTIONS));
+    this.events2
+      .get(WAHAEvents.GROUP_V2_LEAVE)
+      .switch(this.groupEvents(groups$, GROUP_LEAVE_ACTIONS));
+    this.events2
+      .get(WAHAEvents.GROUP_V2_PARTICIPANTS)
+      .switch(this.groupEvents(groups$, GROUP_PARTICIPANT_ACTIONS));
+    this.events2
+      .get(WAHAEvents.GROUP_V2_UPDATE)
+      .switch(this.groupEvents(groups$, GROUP_UPDATE_ACTIONS));
+
+    // Labels live in app state: LabelEdit is the label itself, LabelJid is its
+    // association with a chat. A removed label arrives either as the remove
+    // operation or as an edit carrying the deleted flag.
+    const mutations$ = this.mutations$.asObservable();
+    const labelEdits$ = mutations$.pipe(
+      filter((event) => event.schema === 'LabelEdit'),
+    );
+    const [labelDeleted$, labelUpserted$] = partition(
+      labelEdits$,
+      (event) =>
+        event.operation === 'remove' || Boolean(event.labelEditAction?.deleted),
+    );
+    this.events2
+      .get(WAHAEvents.LABEL_UPSERT)
+      .switch(labelUpserted$.pipe(map((event) => this.toLabel(event))));
+    this.events2
+      .get(WAHAEvents.LABEL_DELETED)
+      .switch(labelDeleted$.pipe(map((event) => this.toLabel(event))));
+
+    const labelChats$ = mutations$.pipe(
+      filter((event) => event.schema === 'LabelJid'),
+    );
+    const [labelChatRemoved$, labelChatAdded$] = partition(
+      labelChats$,
+      (event) =>
+        event.operation === 'remove' ||
+        event.labelAssociationAction?.labeled === false,
+    );
+    this.events2
+      .get(WAHAEvents.LABEL_CHAT_ADDED)
+      .switch(labelChatAdded$.pipe(map((event) => this.toLabelChat(event))));
+    this.events2
+      .get(WAHAEvents.LABEL_CHAT_DELETED)
+      .switch(labelChatRemoved$.pipe(map((event) => this.toLabelChat(event))));
+
+    // Calls are read-only here: the offer, and whichever side ended it.
+    const calls$ = this.calls$.asObservable();
+    this.events2
+      .get(WAHAEvents.CALL_RECEIVED)
+      .switch(this.callEvents(calls$, ['offer', 'offer_notice']));
+    this.events2
+      .get(WAHAEvents.CALL_ACCEPTED)
+      .switch(this.callEvents(calls$, ['accept']));
+    this.events2
+      .get(WAHAEvents.CALL_REJECTED)
+      .switch(this.callEvents(calls$, ['reject', 'terminate']));
+
+    // A revoke arrives as a protocol message rather than an addon.
+    this.events2.get(WAHAEvents.MESSAGE_REVOKED).switch(
+      this.protocol$.asObservable().pipe(
+        filter((event) => event.protocolMessage?.type === REVOKE_PROTOCOL_TYPE),
+        map((event) => this.toMessageRevoked(event)),
+        filter(Boolean),
+      ),
+    );
   }
 
   /**
@@ -411,12 +614,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     if (!content) {
       return false;
     }
-    if (
-      content.reactionMessage ||
-      content.pollUpdateMessage ||
-      content.encEventResponseMessage ||
-      content.protocolMessage
-    ) {
+    if (hasDedicatedEvent(content)) {
       return false;
     }
     const jid = event.key?.remoteJid;
@@ -610,6 +808,225 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   }
 
   /** A receipt can cover several messages; each one needs its own ack. */
+  /**
+   * An addon names the message it follows, and its own key names the sender,
+   * so the payload is built from the pair the way the other engines build it.
+   */
+  private toMessageReaction(event: any): WAMessageReaction | null {
+    const text = event.decrypted?.reaction?.text;
+    if (text === undefined) {
+      return null;
+    }
+    return {
+      ...this.addonBase(event),
+      reaction: {
+        text: text,
+        messageId: this.targetMessageId(event),
+      },
+    } as WAMessageReaction;
+  }
+
+  /**
+   * The reaction as an ordinary chat sends it: a message whose content is a
+   * reactionMessage naming the message it reacts to.
+   */
+  private toMessageReactionFromMessage(event: any): WAMessageReaction | null {
+    const reaction = event.message?.reactionMessage;
+    const target = reaction?.key;
+    if (!target?.id) {
+      return null;
+    }
+    const key = event.key ?? {};
+    const chatId = toCusFormat(key.remoteJid);
+    return {
+      id: buildMessageId(key),
+      timestamp: event.timestampSeconds ?? Math.floor(Date.now() / SECOND),
+      from: chatId,
+      fromMe: Boolean(key.fromMe),
+      source: this.getMessageSource(key.id),
+      to: key.isGroup ? chatId : null,
+      participant: key.participant ? toCusFormat(key.participant) : null,
+      reaction: {
+        text: reaction.text,
+        messageId: this.toTargetMessageId(key, target),
+      },
+    } as WAMessageReaction;
+  }
+
+  private toPollVote(event: any) {
+    return {
+      poll: { id: this.targetMessageId(event) },
+      vote: {
+        ...this.addonBase(event),
+        // Null when the parent poll was never seen, which is what separates a
+        // vote from a failed one.
+        selectedOptions: event.decrypted?.selectedOptionNames ?? null,
+      },
+      _data: this.toPlainData(event),
+    };
+  }
+
+  private toEventResponse(event: any) {
+    return {
+      event: { id: this.targetMessageId(event) },
+      response: {
+        ...this.addonBase(event),
+        response: event.decrypted?.eventResponse ?? null,
+      },
+      _data: this.toPlainData(event),
+    };
+  }
+
+  private toMessageEdited(event: any) {
+    const content = event.decrypted?.message;
+    if (!content) {
+      return null;
+    }
+    return {
+      ...this.addonBase(event),
+      body: extractBody(content) || null,
+      editedMessageId: this.targetMessageId(event),
+      _data: this.toPlainData(event),
+    };
+  }
+
+  /**
+   * A revoke names the message it removed. `before` stays null: the original
+   * is not read back here, which is what GOWS reports as well.
+   */
+  private toMessageRevoked(event: any) {
+    const key = event.protocolMessage?.key;
+    if (!key?.id) {
+      return null;
+    }
+    return {
+      after: null,
+      before: null,
+      revokedMessageId: this.toTargetMessageId(event.key, key),
+      _data: this.toPlainData(event),
+    };
+  }
+
+  /** Presence and chatstate both describe one chat, in the same shape. */
+  private toChatPresences(event: any): WAHAChatPresences {
+    const jid = event.chatJid ?? event.participantJid;
+    const presence =
+      event.state ?? ZAPO_PRESENCE_TO_WAHA[event.type] ?? event.type;
+    return {
+      id: toCusFormat(jid),
+      presences: [
+        {
+          participant: toCusFormat(event.participantJid ?? jid),
+          lastKnownPresence: presence,
+          lastSeen: event.lastSeen?.timestampSeconds ?? null,
+        },
+      ],
+    } as WAHAChatPresences;
+  }
+
+  private toLabel(event: any): Label {
+    const action = event.labelEditAction;
+    return {
+      id: event.id,
+      name: action?.name,
+      color: action?.color,
+      colorHex: Label.toHex(action?.color),
+    } as Label;
+  }
+
+  private toLabelChat(event: any): LabelChatAssociation {
+    return {
+      labelId: event.labelId,
+      // The association carries the id only; the label itself is not resolved
+      // here, which is what the other engines report as well.
+      label: null,
+      chatId: toCusFormat(event.chatJid),
+    };
+  }
+
+  private groupEvents(source: Observable<any>, actions: string[]) {
+    return source.pipe(
+      filter((event) => actions.includes(event.action)),
+      map((event) => ({
+        timestamp: (event.timestampSeconds ?? 0) * SECOND || Date.now(),
+        group: { id: toCusFormat(event.groupJid) },
+        _data: this.toPlainData(event),
+      })),
+    );
+  }
+
+  private callEvents(source: Observable<any>, types: string[]) {
+    return source.pipe(
+      filter((event) => types.includes(event.type)),
+      map((event) => this.toCallData(event)),
+    );
+  }
+
+  private toCallData(event: any): CallData {
+    const from = event.callerPnJid ?? event.callCreatorJid ?? event.groupJid;
+    return {
+      id: event.callId,
+      from: from ? toCusFormat(from) : undefined,
+      timestamp: event.timestampSeconds ?? Math.floor(Date.now() / SECOND),
+      isVideo: Boolean(event.isVideo),
+      isGroup: Boolean(event.groupJid),
+      _data: this.toPlainData(event),
+    };
+  }
+
+  /** The fields every addon payload shares with a message. */
+  private addonBase(event: any) {
+    const key = event.key ?? {};
+    const chatId = toCusFormat(key.remoteJid);
+    return {
+      id: buildMessageId(key),
+      timestamp: event.timestampSeconds ?? Math.floor(Date.now() / SECOND),
+      from: chatId,
+      fromMe: Boolean(key.fromMe),
+      source: this.getMessageSource(key.id),
+      to: key.isGroup ? chatId : null,
+      participant: key.participant ? toCusFormat(key.participant) : null,
+    };
+  }
+
+  /**
+   * The id of the message an event points at, seen from this account.
+   *
+   * The sender addresses the target from their own side: reacting to
+   * something we sent, they name us as the chat and mark it as not theirs.
+   * Read back as-is that produces an id in a chat that does not exist here, so
+   * the chat comes from the event and the direction is flipped when the target
+   * turns out to be ours.
+   */
+  private toTargetMessageId(eventKey: any, target: any): string {
+    const me = this.getSessionMeInfo();
+    const mine = [me?.lid, me?.id, me?.jid ? normalizeJid(me.jid) : null]
+      .filter(Boolean)
+      .map((jid) => toCusFormat(jid));
+    const targetChat = target.remoteJid ? toCusFormat(target.remoteJid) : null;
+    const targetIsOurs = Boolean(targetChat && mine.includes(targetChat));
+    return buildMessageId({
+      id: target.id,
+      fromMe: targetIsOurs ? true : Boolean(target.fromMe),
+      remoteJid: eventKey?.remoteJid ?? target.remoteJid,
+      participant: target.participant,
+    });
+  }
+
+  /** The message an addon points at, in the id form the API accepts back. */
+  private targetMessageId(event: any): string {
+    const key = event.key ?? {};
+    return buildMessageId({
+      id: event.targetMessageId,
+      // An addon always targets a message in the same chat; whose it is comes
+      // from the addon's own direction only for a self-reaction, so the target
+      // keeps the chat and lets the id carry the rest.
+      fromMe: key.fromMe,
+      remoteJid: key.remoteJid,
+      participant: key.participant,
+    });
+  }
+
   private toMessageAcks(event: any): any[] {
     const ids: string[] = event.messageIds ?? [];
     return ids.map((id) => this.toMessageAck(event, id));

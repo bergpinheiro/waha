@@ -55,6 +55,7 @@ function buildStore(
   const options = {
     backends: { waha: backend, contacts: contactsBackend },
     providers: PROVIDERS,
+    cacheProviders: CACHE_PROVIDERS,
   } as unknown as WaCreateStoreOptionsStrict<Backend>;
   return createStore(options);
 }
@@ -86,6 +87,20 @@ const PROVIDERS = {
   messages: 'waha',
   threads: 'waha',
   contacts: 'contacts',
+} as const;
+
+/**
+ * The cache domains default to memory, which loses them on restart. The
+ * message secret in particular is what decrypts an addon - a reaction to a
+ * message this session has already seen would stop decrypting after a
+ * restart - so the caches are persisted alongside the rest of the session.
+ */
+const CACHE_PROVIDERS = {
+  retry: 'waha',
+  groupMetadata: 'waha',
+  chatMetadata: 'waha',
+  deviceList: 'waha',
+  messageSecret: 'waha',
 } as const;
 
 /**

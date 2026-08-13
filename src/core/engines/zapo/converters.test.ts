@@ -1,5 +1,6 @@
 import {
   buildMessageId,
+  hasDedicatedEvent,
   hexColorToArgb,
   matchesChannelRole,
   toParticipantRole,
@@ -137,6 +138,31 @@ describe('ZAPO converters', () => {
       expect(
         WAHA_PRESENCE_TO_CHATSTATE[WAHAPresenceStatus.OFFLINE],
       ).toBeUndefined();
+    });
+  });
+
+  describe('hasDedicatedEvent', () => {
+    it('lets an ordinary message through', () => {
+      expect(hasDedicatedEvent({ conversation: 'oi' })).toBe(false);
+      expect(hasDedicatedEvent(undefined)).toBe(false);
+    });
+
+    it('holds back the contents that have an event of their own', () => {
+      expect(hasDedicatedEvent({ reactionMessage: {} })).toBe(true);
+      expect(hasDedicatedEvent({ pollUpdateMessage: {} })).toBe(true);
+      expect(hasDedicatedEvent({ encEventResponseMessage: {} })).toBe(true);
+      expect(hasDedicatedEvent({ protocolMessage: {} })).toBe(true);
+    });
+
+    // An edit made on the phone arrives as this envelope. It was reaching
+    // message.any as an empty body, observed live on 2026-08-13.
+    it('holds back the encrypted addon envelope', () => {
+      expect(hasDedicatedEvent({ secretEncryptedMessage: {} })).toBe(true);
+    });
+
+    it('sees through an ephemeral wrapper', () => {
+      const wrapped = { ephemeralMessage: { message: { reactionMessage: {} } } };
+      expect(hasDedicatedEvent(wrapped)).toBe(true);
     });
   });
 
