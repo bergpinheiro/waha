@@ -6,6 +6,16 @@ import {
   WhatsappSession,
 } from '@waha/core/abc/session.abc';
 import { ZapoEngineLogger } from '@waha/core/engines/zapo/ZapoEngineLogger';
+import {
+  buildMessageId,
+  hexColorToArgb,
+  matchesChannelRole,
+  toParticipantRole,
+  toZapoKey,
+  WAHA_PRESENCE_TO_CHATSTATE,
+  ZAPO_CHANNEL_ROLE,
+  ZAPO_RECEIPT_TO_ACK,
+} from '@waha/core/engines/zapo/converters';
 import { ZapoContactStore } from '@waha/core/engines/zapo/store/ZapoContactStore';
 import { ZapoStoreFactoryCore } from '@waha/core/engines/zapo/store/ZapoStoreFactoryCore';
 import { NotImplementedByEngineError } from '@waha/core/exceptions';
@@ -132,80 +142,6 @@ interface EngineEvent {
  * Missing ffmpeg is non-fatal: the affected step is skipped with a warning.
  */
 const MEDIA_PROCESSOR = createMediaProcessor();
-
-/** zapo viewer roles mapped onto WAHA's channel roles. */
-const ZAPO_CHANNEL_ROLE = {
-  owner: ChannelRole.OWNER,
-  admin: ChannelRole.ADMIN,
-  subscriber: ChannelRole.SUBSCRIBER,
-  guest: ChannelRole.GUEST,
-};
-
-/** The participant carries two admin flags rather than a single rank. */
-function toParticipantRole(
-  participant: WaGroupParticipant,
-): GroupParticipantRole {
-  if (participant.isSuperAdmin) {
-    return GroupParticipantRole.SUPERADMIN;
-  }
-  if (participant.isAdmin) {
-    return GroupParticipantRole.ADMIN;
-  }
-  return GroupParticipantRole.PARTICIPANT;
-}
-
-/** Chat-scoped presences map onto chatstates; the rest are account-wide. */
-const WAHA_PRESENCE_TO_CHATSTATE = {
-  [WAHAPresenceStatus.TYPING]: 'composing',
-  [WAHAPresenceStatus.RECORDING]: 'recording',
-  [WAHAPresenceStatus.PAUSED]: 'paused',
-};
-
-/** zapo receipt statuses mapped onto WAHA's numeric ack ladder. */
-const ZAPO_RECEIPT_TO_ACK = {
-  error: WAMessageAck.ERROR,
-  pending: WAMessageAck.PENDING,
-  server: WAMessageAck.SERVER,
-  delivery: WAMessageAck.DEVICE,
-  read: WAMessageAck.READ,
-  'read-self': WAMessageAck.READ,
-  played: WAMessageAck.PLAYED,
-};
-
-/**
- * WAHA's parsed key has every field optional; zapo requires remoteJid, id and
- * fromMe, so the shape is restated instead of cast.
- */
-function toZapoKey(messageId: string, chatId?: string): WaMessageKey {
-  const key = parseMessageIdSerialized(messageId);
-  return {
-    remoteJid: key.remoteJid ?? toJID(chatId),
-    id: key.id,
-    fromMe: Boolean(key.fromMe),
-    participant: key.participant,
-  };
-}
-
-/** WhatsApp stores the status background as a signed ARGB int, not a hex string. */
-function hexColorToArgb(color?: string): number | undefined {
-  if (!color) {
-    return undefined;
-  }
-  const hex = color.replace('#', '');
-  if (hex.length !== 6) {
-    return undefined;
-  }
-  return (0xff000000 | parseInt(hex, 16)) >>> 0;
-}
-
-function buildMessageId(key: any): string {
-  return SerializeMessageKey({
-    id: key.id,
-    fromMe: key.fromMe,
-    remoteJid: key.remoteJid,
-    participant: key.participant,
-  });
-}
 
 export class WhatsappSessionZapoCore extends WhatsappSession {
   engine = WAHAEngine.ZAPO;
@@ -1014,13 +950,8 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   async channelsList(query: ListChannelsQuery): Promise<Channel[]> {
     const newsletters = await this.client.newsletter.listSubscribed();
     const channels = newsletters.map((data) => this.toChannel(data));
-    if (!query?.role) {
-      return channels;
-    }
-    // ChannelRoleFilter is a narrower enum over the same string values, so the
-    // comparison is done on those rather than across the two enum types.
-    return channels.filter(
-      (channel) => String(channel.role) === String(query.role),
+    return channels.filter((channel) =>
+      matchesChannelRole(channel.role, query?.role),
     );
   }
 
