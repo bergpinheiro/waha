@@ -1234,15 +1234,20 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     return source.pipe(
       filter((event) => this.shouldProcessCallEvent(event)),
       filter((event) => types.includes(event.type)),
-      map((event) => this.toCallData(event)),
+      mergeMap((event) => this.toCallData(event)),
     );
   }
 
-  private toCallData(event: any): CallData {
+  /**
+   * Only the offer carries the caller's phone form; the stanzas that end the
+   * call name a lid. Reported as they come, the events of one call disagree
+   * on who it was with, so the lid is resolved the way a chat id is.
+   */
+  private async toCallData(event: any): Promise<CallData> {
     const from = event.callerPnJid ?? event.callCreatorJid ?? event.groupJid;
     return {
       id: event.callId,
-      from: from ? toCusFormat(from) : undefined,
+      from: from ? toCusFormat(await this.canonicalChatJid(from)) : undefined,
       timestamp: event.timestampSeconds ?? Math.floor(Date.now() / SECOND),
       isVideo: Boolean(event.isVideo),
       isGroup: Boolean(event.groupJid),
