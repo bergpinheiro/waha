@@ -1,7 +1,10 @@
 import { proto } from '@adiwajshing/baileys';
 import { UnprocessableEntityException } from '@nestjs/common';
 import { createMediaProcessor } from '@zapo-js/media-utils';
-import { WhatsappSession } from '@waha/core/abc/session.abc';
+import {
+  getChannelInviteLink,
+  WhatsappSession,
+} from '@waha/core/abc/session.abc';
 import { ZapoEngineLogger } from '@waha/core/engines/zapo/ZapoEngineLogger';
 import { ZapoStoreFactoryCore } from '@waha/core/engines/zapo/store/ZapoStoreFactoryCore';
 import { NotImplementedByEngineError } from '@waha/core/exceptions';
@@ -16,6 +19,13 @@ import {
 } from '@waha/core/utils/ids';
 import { toCusFormat, toJID } from '@waha/core/utils/jids';
 import { PairingCodeResponse } from '@waha/structures/auth.dto';
+import { DeleteStatusRequest, TextStatus } from '@waha/structures/status.dto';
+import {
+  Channel,
+  ChannelRole,
+  CreateChannelRequest,
+  ListChannelsQuery,
+} from '@waha/structures/channels.dto';
 import {
   ChatRequest,
   CheckNumberStatusQuery,
@@ -73,6 +83,7 @@ import {
   WaMessageKey,
   WaGroupMetadata,
   WaGroupParticipant,
+  WaNewsletterMetadata,
   WaStoredContactRecord,
   WaStoredMessageRecord,
   WaStoredThreadRecord,
@@ -121,6 +132,14 @@ interface EngineEvent {
  */
 const MEDIA_PROCESSOR = createMediaProcessor();
 
+/** zapo viewer roles mapped onto WAHA's channel roles. */
+const ZAPO_CHANNEL_ROLE = {
+  owner: ChannelRole.OWNER,
+  admin: ChannelRole.ADMIN,
+  subscriber: ChannelRole.SUBSCRIBER,
+  guest: ChannelRole.GUEST,
+};
+
 /** The participant carries two admin flags rather than a single rank. */
 function toParticipantRole(
   participant: WaGroupParticipant,
@@ -164,6 +183,18 @@ function toZapoKey(messageId: string, chatId?: string): WaMessageKey {
     fromMe: Boolean(key.fromMe),
     participant: key.participant,
   };
+}
+
+/** WhatsApp stores the status background as a signed ARGB int, not a hex string. */
+function hexColorToArgb(color?: string): number | undefined {
+  if (!color) {
+    return undefined;
+  }
+  const hex = color.replace('#', '');
+  if (hex.length !== 6) {
+    return undefined;
+  }
+  return (0xff000000 | parseInt(hex, 16)) >>> 0;
 }
 
 function buildMessageId(key: any): string {
@@ -900,6 +931,157 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   @Activity()
   async unblockContact(request: ContactRequest) {
     await this.client.privacy.unblockUser(toJID(request.contactId));
+  }
+
+  /**
+   * Status updates need an explicit recipient list. The other engines fall
+   * back to "everyone in my contacts", which this engine cannot do: the
+   * contact store has no enumeration (see getContacts).
+   */
+  @Activity()
+  async sendTextStatus(status: TextStatus) {
+    const recipients = this.requireStatusRecipients(status.contacts);
+    // The typed text content carries no styling, so the styled status goes
+    // through the raw proto, which the send builder also accepts.
+    return this.client.status.send({
+      content: {
+        extendedTextMessage: {
+          text: status.text,
+          backgroundArgb: hexColorToArgb(status.backgroundColor),
+          font: status.font,
+        },
+      } as unknown as WaSendMessageContent,
+      recipients: recipients,
+    });
+  }
+
+  @Activity()
+  async deleteStatus(request: DeleteStatusRequest) {
+    const recipients = this.requireStatusRecipients(request.contacts);
+    await this.client.status.revokeStatus({
+      messageId: request.id,
+      recipients: recipients,
+    });
+  }
+
+  private requireStatusRecipients(contacts?: string[]): string[] {
+    if (!contacts?.length) {
+      throw new UnprocessableEntityException(
+        'Provide "contacts" - this engine cannot resolve the full contact list.',
+      );
+    }
+    return contacts.map((contact) => toJID(contact));
+  }
+
+  /**
+   * Calls are read-only in the library, so the reject is written as a raw
+   * stanza. The caller's exact jid is used with no normalization - a
+   * normalized jid addresses a different device and the reject is dropped.
+   */
+  @Activity()
+  async rejectCall(from: string, id: string): Promise<void> {
+    const caller = toJID(from);
+    await this.client.lowlevel.sendNode({
+      tag: 'call',
+      // The stanza id doubles as the call id, which is already unique.
+      attrs: { to: caller, id: id },
+      content: [
+        {
+          tag: 'reject',
+          attrs: {
+            'call-id': id,
+            'call-creator': caller,
+            count: '0',
+          },
+        },
+      ],
+    });
+  }
+
+  @Activity()
+  async channelsList(query: ListChannelsQuery): Promise<Channel[]> {
+    const newsletters = await this.client.newsletter.listSubscribed();
+    const channels = newsletters.map((data) => this.toChannel(data));
+    if (!query?.role) {
+      return channels;
+    }
+    // ChannelRoleFilter is a narrower enum over the same string values, so the
+    // comparison is done on those rather than across the two enum types.
+    return channels.filter(
+      (channel) => String(channel.role) === String(query.role),
+    );
+  }
+
+  @Activity()
+  async channelsCreateChannel(request: CreateChannelRequest): Promise<Channel> {
+    let picture: Uint8Array;
+    if (request.picture) {
+      const media = await this.fileToMedia(request.picture);
+      picture = media.media;
+    }
+    const created = await this.client.newsletter.create({
+      name: request.name,
+      description: request.description,
+      picture: picture,
+    });
+    return this.toChannel(created);
+  }
+
+  @Activity()
+  async channelsGetChannel(id: string): Promise<Channel> {
+    const data = await this.client.newsletter.fetch(toJID(id));
+    return this.toChannel(data);
+  }
+
+  @Activity()
+  async channelsGetChannelByInviteCode(inviteCode: string): Promise<Channel> {
+    const data = await this.client.newsletter.fetchByInvite(inviteCode);
+    return this.toChannel(data);
+  }
+
+  @Activity()
+  async channelsDeleteChannel(id: string): Promise<void> {
+    await this.client.newsletter.delete(toJID(id));
+  }
+
+  @Activity()
+  async channelsFollowChannel(id: string): Promise<void> {
+    await this.client.newsletter.follow(toJID(id));
+  }
+
+  @Activity()
+  async channelsUnfollowChannel(id: string): Promise<void> {
+    await this.client.newsletter.unfollow(toJID(id));
+  }
+
+  @Activity()
+  async channelsMuteChannel(id: string): Promise<void> {
+    await this.client.newsletter.mute({
+      newsletterJid: toJID(id),
+      mute: true,
+    });
+  }
+
+  @Activity()
+  async channelsUnmuteChannel(id: string): Promise<void> {
+    await this.client.newsletter.mute({
+      newsletterJid: toJID(id),
+      mute: false,
+    });
+  }
+
+  private toChannel(data: WaNewsletterMetadata): Channel {
+    return {
+      id: data.jid,
+      name: data.name ?? null,
+      description: data.description ?? null,
+      invite: data.invite ? getChannelInviteLink(data.invite) : null,
+      preview: data.preview?.directPath ?? null,
+      picture: data.picture?.directPath ?? null,
+      verified: Boolean(data.verification),
+      subscribersCount: data.subscribersCount ?? null,
+      role: ZAPO_CHANNEL_ROLE[data.viewerRole] ?? ChannelRole.GUEST,
+    } as Channel;
   }
 
   @Activity()
