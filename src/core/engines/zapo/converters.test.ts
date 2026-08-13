@@ -20,7 +20,7 @@ describe('ZAPO converters', () => {
         fromMe: false,
         remoteJid: '11111111111@s.whatsapp.net',
       });
-      expect(id).toEqual('false_11111111111@s.whatsapp.net_AAA');
+      expect(id).toEqual('false_11111111111@c.us_AAA');
     });
 
     it('keeps the participant for group messages', () => {
@@ -30,7 +30,7 @@ describe('ZAPO converters', () => {
         remoteJid: '123@g.us',
         participant: '22222222222@s.whatsapp.net',
       });
-      expect(id).toEqual('true_123@g.us_BBB_22222222222@s.whatsapp.net');
+      expect(id).toEqual('true_123@g.us_BBB_22222222222@c.us');
     });
   });
 
@@ -53,8 +53,8 @@ describe('ZAPO converters', () => {
       expect(key.fromMe).toBe(false);
     });
 
-    it('round-trips with buildMessageId', () => {
-      const original = 'true_123@g.us_CCC_22222222222@s.whatsapp.net';
+    it('round-trips with buildMessageId in the canonical form', () => {
+      const original = 'true_123@g.us_CCC_22222222222@c.us';
       expect(buildMessageId(toZapoKey(original))).toEqual(original);
     });
   });
@@ -101,23 +101,24 @@ describe('ZAPO converters', () => {
   });
 
   describe('receipt to ack', () => {
-    it('maps delivery to DEVICE, not SERVER', () => {
-      expect(ZAPO_RECEIPT_TO_ACK['delivery']).toEqual(WAMessageAck.DEVICE);
+    // The keys have to be the ones WaReceiptStatus carries; an invented key
+    // degrades every receipt to SERVER without failing anything.
+    it('covers exactly the statuses the library emits', () => {
+      expect(Object.keys(ZAPO_RECEIPT_TO_ACK).sort()).toEqual([
+        'delivered',
+        'inactive',
+        'played',
+        'read',
+      ]);
     });
 
-    it('treats a self read like a read', () => {
-      expect(ZAPO_RECEIPT_TO_ACK['read-self']).toEqual(WAMessageAck.READ);
+    it('maps delivered to DEVICE, not SERVER', () => {
+      expect(ZAPO_RECEIPT_TO_ACK['delivered']).toEqual(WAMessageAck.DEVICE);
+    });
+
+    it('maps read and played up the ladder', () => {
       expect(ZAPO_RECEIPT_TO_ACK['read']).toEqual(WAMessageAck.READ);
-    });
-
-    it('covers the whole ack ladder', () => {
-      const acks = new Set(Object.values(ZAPO_RECEIPT_TO_ACK));
-      expect(acks).toContain(WAMessageAck.ERROR);
-      expect(acks).toContain(WAMessageAck.PENDING);
-      expect(acks).toContain(WAMessageAck.SERVER);
-      expect(acks).toContain(WAMessageAck.DEVICE);
-      expect(acks).toContain(WAMessageAck.READ);
-      expect(acks).toContain(WAMessageAck.PLAYED);
+      expect(ZAPO_RECEIPT_TO_ACK['played']).toEqual(WAMessageAck.PLAYED);
     });
   });
 

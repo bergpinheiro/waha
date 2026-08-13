@@ -105,9 +105,10 @@ export class ZapoChatStore {
     });
   }
 
-  list(limit?: number): Promise<ZapoChatRecord[]> {
+  list(limit?: number, offset?: number): Promise<ZapoChatRecord[]> {
     return this.repository.getAll({
       limit: limit,
+      offset: offset,
       sortBy: 'conversationTimestamp',
       sortOrder: SortOrder.DESC,
     });

@@ -41,6 +41,7 @@ const describeStorage = SQLITE_AVAILABLE ? describe : describe.skip;
  */
 
 const PEER_JID = '5585999990000@s.whatsapp.net';
+const PEER_CHAT_ID = '5585999990000@c.us';
 const DEVICE_JID = '5585991203123:12@s.whatsapp.net';
 const SESSION = 'zapo-e2e';
 
@@ -132,9 +133,10 @@ describe('ZAPO against the fake server', () => {
     expect(event.message?.conversation).toEqual('ola do peer falso');
     expect(event.key.remoteJid).toEqual(PEER_JID);
     expect(event.key.fromMe).toBe(false);
-    // The converter has to survive a key produced by the protocol, not a fixture
+    // The converter has to survive a key produced by the protocol, not a
+    // fixture - and emit the customer-facing form the API accepts back.
     expect(buildMessageId(event.key)).toEqual(
-      `false_${PEER_JID}_${event.key.id}`,
+      `false_${PEER_CHAT_ID}_${event.key.id}`,
     );
   }, 60_000);
 

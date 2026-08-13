@@ -33,6 +33,7 @@ import {
 import {
   isJidGroup,
   isJidNewsletter,
+  isJidStatusBroadcast,
   isLidUser,
   normalizeJid,
   toCusFormat,
@@ -97,7 +98,7 @@ import { BinaryFile, RemoteFile } from '@waha/structures/files.dto';
 import { WAMessage } from '@waha/structures/responses.dto';
 import type { Agent } from 'https';
 import { merge, Subject } from 'rxjs';
-import { filter, map, mergeMap } from 'rxjs/operators';
+import { filter, map, mergeMap, share } from 'rxjs/operators';
 import {
   WaClient,
   WaIncomingMessageEvent,
@@ -169,6 +170,8 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   private outgoing$: Subject<any>;
   private receipts$: Subject<any>;
   private unsubscribes: Array<() => void>;
+  /** Set while stop() runs, so its own close is not reported as a failure. */
+  private stopping = false;
 
   public constructor(config) {
     super(config);
@@ -262,16 +265,19 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
 
     this.on('connection', (event) => {
       // The library reconnects on its own after an abnormal socket drop and
-      // emits nothing while doing so, so a close here is always deliberate:
-      // our own disconnect, a logout, or the device being unlinked.
+      // emits nothing while doing so. A close that does reach us is therefore
+      // terminal - logout, device removed, or a stream failure it gave up on -
+      // and has to surface, or the session sits WORKING behind a dead socket
+      // and auto-restart never fires.
       if (event.status === 'open') {
         this.status = WAHASessionStatus.WORKING;
         return;
       }
-      if (event.status === 'close' && event.isLogout) {
-        this.presence = null;
-        this.status = WAHASessionStatus.FAILED;
+      if (event.status !== 'close' || this.stopping) {
+        return;
       }
+      this.presence = null;
+      this.status = WAHASessionStatus.FAILED;
     });
 
     this.on('message', (event) => {
@@ -311,9 +317,13 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
 
     // 'message' carries what the user received, 'message.any' carries both
     // directions, matching how the other engines split the two streams.
+    // share(): MESSAGE and MESSAGE_ANY both subscribe, and without it every
+    // message would be converted - and its media downloaded - twice.
     const messages$ = incoming$.pipe(
+      filter((event) => this.shouldProcessIncomingMessage(event)),
       mergeMap((event) => this.processIncomingMessage(event)),
       filter(Boolean),
+      share(),
     );
     this.events2
       .get(WAHAEvents.MESSAGE)
@@ -330,7 +340,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
 
     const acks$ = this.receipts$
       .asObservable()
-      .pipe(map((event) => this.toMessageAck(event)));
+      .pipe(mergeMap((event) => this.toMessageAcks(event)));
     this.events2.get(WAHAEvents.MESSAGE_ACK).switch(acks$);
   }
 
@@ -338,6 +348,42 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
    * Converts an incoming message and downloads its media, mirroring how the
    * other engines shape the webhook payload.
    */
+  /**
+   * The client emits `message` for every decrypted stanza, including the ones
+   * WAHA surfaces through dedicated events. Letting them through would turn a
+   * reaction or a revoke into an empty-bodied message webhook and push the
+   * chat up the list. Mirrors the filter the other engines apply.
+   */
+  protected shouldProcessIncomingMessage(event: WaIncomingMessageEvent) {
+    const content: any = event?.message;
+    if (!content) {
+      return false;
+    }
+    if (
+      content.reactionMessage ||
+      content.pollUpdateMessage ||
+      content.encEventResponseMessage ||
+      content.protocolMessage
+    ) {
+      return false;
+    }
+    const jid = event.key?.remoteJid;
+    if (!jid) {
+      return false;
+    }
+    // Honours WHATSAPP_SESSION_IGNORE_*, which is otherwise never applied.
+    if (isJidStatusBroadcast(jid) && this.jids.ignore.status) {
+      return false;
+    }
+    if (isJidGroup(jid) && this.jids.ignore.groups) {
+      return false;
+    }
+    if (isJidNewsletter(jid) && this.jids.ignore.channels) {
+      return false;
+    }
+    return true;
+  }
+
   protected async processIncomingMessage(
     event: WaIncomingMessageEvent,
     downloadMedia = true,
@@ -444,7 +490,13 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     } as WAMessage;
   }
 
-  private toMessageAck(event: any) {
+  /** A receipt can cover several messages; each one needs its own ack. */
+  private toMessageAcks(event: any): any[] {
+    const ids: string[] = event.messageIds ?? [];
+    return ids.map((id) => this.toMessageAck(event, id));
+  }
+
+  private toMessageAck(event: any, messageId?: string) {
     const ids: string[] = event.messageIds ?? [];
     const ack = ZAPO_RECEIPT_TO_ACK[event.status] ?? WAMessageAck.SERVER;
     // The receipt names the chat and, in groups, the participant. Falling back
@@ -452,7 +504,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     // the device that acked it.
     const chatJid = event.chatJid ?? event.recipientJid;
     return {
-      id: ids[0],
+      id: messageId ?? ids[0],
       from: toCusFormat(chatJid ?? ''),
       participant: event.participantJid
         ? toCusFormat(event.participantJid)
@@ -483,15 +535,23 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   }
 
   async stop(): Promise<void> {
+    this.stopping = true;
     for (const unsubscribe of this.unsubscribes) {
       unsubscribe();
     }
     this.unsubscribes = [];
-    await this.client?.disconnect();
-    this.client = null;
-    // Releases the database connections opened for this session.
-    await this.storage?.close();
-    this.storage = null;
+    try {
+      await this.client?.disconnect();
+    } catch (error) {
+      this.logger.warn({ error: error }, 'Failed to disconnect cleanly');
+    } finally {
+      this.client = null;
+      // Released even when the disconnect throws, or the pool leaks.
+      await this.storage?.close();
+      this.storage = null;
+    }
+    this.mediaManager.close();
+    this.status = WAHASessionStatus.STOPPED;
     this.stopEvents();
   }
 
@@ -633,7 +693,18 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   @Activity()
   async sendSeen(request: SendSeenRequest) {
     const chatId = toJID(request.chatId);
-    await this.client.message.sendReceipt(chatId, [request.messageId], {
+    // readChatMessagesWSImpl fills messageIds; messageId is the single-message
+    // form. Both carry the serialized WAHA id, which has to be parsed back.
+    const ids = request.messageIds?.length
+      ? request.messageIds
+      : [request.messageId];
+    const stanzaIds = ids
+      .filter(Boolean)
+      .map((id) => toZapoKey(id, request.chatId).id);
+    if (!stanzaIds.length) {
+      return;
+    }
+    await this.client.message.sendReceipt(chatId, stanzaIds, {
       type: 'read',
     });
   }
@@ -812,7 +883,10 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
    * WAHA's own index and the thread record is merged in for its flags.
    */
   async getChats(pagination: PaginationParams) {
-    const indexed = await this.storage.chats.list(pagination?.limit);
+    const indexed = await this.storage.chats.list(
+      pagination?.limit,
+      pagination?.offset,
+    );
     const threads = this.storage.store.session(this.name).threads;
     const chats: ChatSummary[] = [];
     for (const entry of indexed) {
@@ -828,12 +902,19 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     pagination: PaginationParams,
     filter?: OverviewFilter,
   ): Promise<ChatSummary[]> {
-    const chats = await this.getChats(pagination);
+    // The filter names specific chats, so it cannot be applied to a page: the
+    // requested chat may sit outside it. Asking for ids means asking for those.
     const ids = filter?.ids?.map((id) => toJID(id));
-    const selected = ids
-      ? chats.filter((chat) => ids.includes(toJID(chat.id)))
-      : chats;
-    return Promise.all(selected.map((chat) => this.fetchChatSummary(chat)));
+    if (ids?.length) {
+      const wanted = await Promise.all(
+        ids.map((jid) => this.chatSummaryFor(jid)),
+      );
+      return Promise.all(
+        wanted.filter(Boolean).map((chat) => this.fetchChatSummary(chat)),
+      );
+    }
+    const chats = await this.getChats(pagination);
+    return Promise.all(chats.map((chat) => this.fetchChatSummary(chat)));
   }
 
   /**
@@ -867,6 +948,21 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     } catch (error) {
       this.logger.warn({ error: error }, 'Failed to seed the chat index');
     }
+  }
+
+  /** A single chat by jid, whether or not it is on the current page. */
+  private async chatSummaryFor(jid: string): Promise<ChatSummary | null> {
+    const thread = await this.storage.store
+      .session(this.name)
+      .threads.getByJid(jid);
+    if (thread) {
+      return this.toChatSummary(thread);
+    }
+    const indexed = await this.storage.chats.getById(jid);
+    if (!indexed) {
+      return null;
+    }
+    return this.toChatSummary({ jid: jid, name: indexed.name });
   }
 
   /** Records that a conversation had activity, so the list can be ordered. */
@@ -1299,9 +1395,12 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   @Activity()
   async getGroups(pagination: PaginationParams): Promise<any> {
     const groups = await this.client.group.queryAllGroups();
+    // The library returns every group at once, so the page is cut here -
+    // dropping the offset would make paging loop on the first page.
+    const offset = pagination?.offset ?? 0;
     const limited = pagination?.limit
-      ? groups.slice(0, pagination.limit)
-      : groups;
+      ? groups.slice(offset, offset + pagination.limit)
+      : groups.slice(offset);
     return limited.map((metadata) => this.toGroup(metadata));
   }
 
@@ -1610,9 +1709,17 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     return { id: replyTo };
   }
 
+  /**
+   * The id has to come back in the serialized form the API accepts, otherwise
+   * feeding it into react/edit/delete parses into an empty key.
+   */
   private toSentMessage(chatId: string, result: WaMessagePublishResult): any {
     return {
-      id: result?.id,
+      id: buildMessageId({
+        id: result?.id,
+        fromMe: true,
+        remoteJid: chatId,
+      }),
       to: toCusFormat(chatId),
       fromMe: true,
       timestamp: Math.floor(Date.now() / 1000),

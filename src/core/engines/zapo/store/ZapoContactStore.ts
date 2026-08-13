@@ -101,8 +101,18 @@ export class ZapoContactStore implements WaContactStore {
     await this.repository.upsertMany(records.map((r) => this.toEntity(r)));
   }
 
+  /**
+   * A contact is keyed by whichever jid addressed it, which today is usually
+   * the @lid one, so a lookup by phone jid has to fall back to the phone
+   * column - the library's own memory store behaves the same way, and callers
+   * inside it rely on that.
+   */
   async getByJid(jid: string): Promise<WaStoredContactRecord | null> {
-    return this.repository.getById(jid);
+    const byId = await this.repository.getById(jid);
+    if (byId) {
+      return byId;
+    }
+    return this.getByPhoneNumber(jid);
   }
 
   async getByPhoneNumber(pn: string): Promise<WaStoredContactRecord | null> {

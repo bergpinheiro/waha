@@ -2,7 +2,7 @@ import {
   parseMessageIdSerialized,
   SerializeMessageKey,
 } from '@waha/core/utils/ids';
-import { toJID } from '@waha/core/utils/jids';
+import { normalizeJid, toCusFormat, toJID } from '@waha/core/utils/jids';
 import { ChannelRole, ChannelRoleFilter } from '@waha/structures/channels.dto';
 import { WAHAPresenceStatus, WAMessageAck } from '@waha/structures/enums.dto';
 import { GroupParticipantRole } from '@waha/structures/groups.dto';
@@ -31,14 +31,16 @@ export const WAHA_PRESENCE_TO_CHATSTATE = {
 };
 
 /** zapo receipt statuses mapped onto WAHA's numeric ack ladder. */
+/**
+ * Keyed by the four values WaReceiptStatus actually carries. An invented key
+ * silently degrades every receipt to SERVER, so this list must not drift from
+ * the library's type.
+ */
 export const ZAPO_RECEIPT_TO_ACK = {
-  error: WAMessageAck.ERROR,
-  pending: WAMessageAck.PENDING,
-  server: WAMessageAck.SERVER,
-  delivery: WAMessageAck.DEVICE,
+  delivered: WAMessageAck.DEVICE,
   read: WAMessageAck.READ,
-  'read-self': WAMessageAck.READ,
   played: WAMessageAck.PLAYED,
+  inactive: WAMessageAck.SERVER,
 };
 
 /** The participant carries two admin flags rather than a single rank. */
@@ -70,12 +72,18 @@ export function toZapoKey(messageId: string, chatId?: string): WaMessageKey {
   };
 }
 
+/**
+ * The documented id format uses the customer-facing chat id, which is what
+ * every other engine emits and what the API accepts back.
+ */
 export function buildMessageId(key: any): string {
   return SerializeMessageKey({
     id: key.id,
     fromMe: key.fromMe,
-    remoteJid: key.remoteJid,
-    participant: key.participant,
+    remoteJid: toCusFormat(key.remoteJid),
+    participant: key.participant
+      ? toCusFormat(normalizeJid(key.participant))
+      : undefined,
   });
 }
 
