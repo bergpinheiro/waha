@@ -202,6 +202,9 @@ interface EngineEvent {
  */
 const MEDIA_PROCESSOR = createMediaProcessor();
 
+/** The chat every status lives in. */
+const STATUS_BROADCAST_JID = 'status@broadcast';
+
 /** protocolMessage.type for a revoke. */
 const REVOKE_PROTOCOL_TYPE = proto.Message.ProtocolMessage.Type
   .REVOKE as number;
@@ -574,7 +577,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     const groups$ = this.groups$.asObservable();
     this.events2
       .get(WAHAEvents.GROUP_V2_JOIN)
-      .switch(this.groupEvents(groups$, GROUP_JOIN_ACTIONS));
+      .switch(this.groupJoinEvents(groups$));
     this.events2
       .get(WAHAEvents.GROUP_V2_LEAVE)
       .switch(this.groupEvents(groups$, GROUP_LEAVE_ACTIONS));
@@ -1111,6 +1114,38 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
   }
 
   /**
+   * Joining a group reports the group itself, not just its id: the payload is
+   * a full GroupInfo, the way GOWS builds it. The stanza does not carry the
+   * membership, so the metadata is queried - and when that fails the id alone
+   * is still reported rather than dropping the event.
+   */
+  private groupJoinEvents(source: Observable<any>) {
+    return source.pipe(
+      filter((event) => GROUP_JOIN_ACTIONS.includes(event.action)),
+      mergeMap(async (event) => ({
+        timestamp: this.groupTimestamp(event),
+        group: await this.toJoinedGroup(event.groupJid),
+        _data: this.toPlainData(event),
+      })),
+    );
+  }
+
+  private async toJoinedGroup(groupJid: string): Promise<any> {
+    try {
+      const metadata = await this.client.group.queryGroupMetadata(
+        toJID(groupJid),
+      );
+      return this.toGroup(metadata);
+    } catch (error) {
+      this.logger.warn(
+        { groupJid: groupJid, error: error?.message },
+        'could not read the group that was just joined',
+      );
+      return { id: toCusFormat(groupJid) };
+    }
+  }
+
+  /**
    * Membership changes, which name who changed and how. The role comes from
    * the action rather than from the participant's own attribute, the way GOWS
    * derives it: someone who just left is LEFT, someone promoted is ADMIN.
@@ -1140,9 +1175,14 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     const id = toCusFormat(
       participant.jid ?? participant.lidJid ?? participant.phoneJid,
     );
+    // The stanza carries the phone form alongside the lid, so `pn` is filled
+    // from it rather than left null whenever the id itself is a lid.
+    const phone = participant.phoneJid
+      ? toCusFormat(participant.phoneJid)
+      : null;
     return {
       id: id,
-      pn: isPnUser(id) ? id : null,
+      pn: isPnUser(id) ? id : phone,
       role: GROUP_PARTICIPANT_ROLES[type],
     };
   }
@@ -2081,16 +2121,16 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     // typed text content carries no background or font, and this API exposes
     // both - so the styled status goes through the raw proto the builder also
     // accepts. Both forms are nacked today (see the note on the class).
-    return this.client.status.send({
-      content: {
+    return this.publishStatus(
+      {
         extendedTextMessage: {
           text: status.text,
           backgroundArgb: hexColorToArgb(status.backgroundColor),
           font: status.font,
         },
       } as unknown as WaSendMessageContent,
-      recipients: recipients,
-    });
+      recipients,
+    );
   }
 
   @Activity()
@@ -2127,10 +2167,31 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
 
   private async sendMediaStatus(status: { contacts?: string[] }, content: any) {
     const recipients = await this.resolveStatusRecipients(status.contacts);
-    return this.client.status.send({
-      content: content as WaSendMessageContent,
+    return this.publishStatus(content as WaSendMessageContent, recipients);
+  }
+
+  /**
+   * Publishes a status and reports it the way a sent message is reported.
+   *
+   * A status does not travel through the ordinary send path - the library
+   * fans it out to the recipient list instead, and emits no `message_send` -
+   * so nothing reached a webhook. GOWS builds the same event for a status as
+   * for any other send, so the event is raised here.
+   */
+  private async publishStatus(
+    content: WaSendMessageContent,
+    recipients: string[],
+  ): Promise<WaMessagePublishResult> {
+    const result = await this.client.status.send({
+      content: content,
       recipients: recipients,
     });
+    this.outgoing$.next({
+      to: STATUS_BROADCAST_JID,
+      id: result?.id,
+      message: content,
+    } as any);
+    return result;
   }
 
   @Activity()
