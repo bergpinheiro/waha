@@ -1,0 +1,181 @@
+# Live validation stack for the feat/engine-zapo branch (WAHA Core).
+#
+# Brings up everything the ZAPO engine needs to be exercised for real:
+#   - WAHA built from local source, all five engines available
+#   - PostgreSQL for the sessions, which is what production uses - it is also
+#     the store path this engine has never executed (the Jest run covered
+#     SQLite only), so it is the one worth exercising here
+#   - Redis, required by the WAHA Chatwoot app
+#   - Chatwoot with its own Postgres and Redis, to validate the ZAPOHelper
+#
+# Usage:
+#   docker compose -f docker-compose.zapotest.yaml up -d --build
+#   WAHA      -> http://localhost:3001  (pair the "default" session)
+#   Chatwoot  -> http://localhost:3002  (create the account on first run)
+#
+# The image is built by the Dockerfile default (with Chromium) on purpose:
+# WEBJS and WPP need a browser, and the point here is that adding a fifth
+# engine did not disturb the other four.
+services:
+  waha:
+    image: waha-zapo:test
+    build:
+      context: .
+    restart: unless-stopped
+    # Bypass /entrypoint.sh: a Windows checkout gives it CRLF line endings, so
+    # the kernel cannot find '/bin/sh\r'. The script only computes
+    # UV_THREADPOOL_SIZE and execs node, so run node directly under tini.
+    command: ['node', 'dist/main']
+    depends_on:
+      redis:
+        condition: service_healthy
+      waha-postgres:
+        condition: service_healthy
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
+    ports:
+      - '127.0.0.1:3001:3000/tcp'
+    environment:
+      # Engine is global in Core, so the five are validated by restarting with
+      # a different value: ENGINE=NOWEB docker compose -f ... up -d waha
+      WHATSAPP_DEFAULT_ENGINE: ${ENGINE:-ZAPO}
+      WAHA_PRINT_QR: 'True'
+      WAHA_LOG_FORMAT: PRETTY
+      WAHA_LOG_LEVEL: info
+      # Both keys are required, and they play different roles:
+      #   WAHA_API_KEY       - what requests authenticate against. Without it
+      #                        ApiKeyAuthFactory falls back to NoAuth and the
+      #                        API is wide open.
+      #   WAHA_API_KEY_PLAIN - what the apps use to call WAHA back, which the
+      #                        Chatwoot app needs.
+      WAHA_API_KEY: 'sha512:2acdcd7a6497cc2702c9f3cf87d4ac93562676841bc518ccd7f0a0061b4a58c4928b9115e2fdc32dfe3e3bdf80a2119a6d39c3125b16e0e7085a65c3777585bc'
+      WAHA_API_KEY_PLAIN: '666'
+      WAHA_DASHBOARD_USERNAME: admin
+      WAHA_DASHBOARD_PASSWORD: '666'
+      WHATSAPP_SWAGGER_USERNAME: admin
+      WHATSAPP_SWAGGER_PASSWORD: '666'
+      WHATSAPP_API_KEY_EXCLUDE_PATH: 'ping,health'
+      WAHA_MEDIA_STORAGE: LOCAL
+      WHATSAPP_FILES_FOLDER: /app/.media
+      # The Chatwoot app runs its queues on Redis. The variable is REDIS_URL
+      # (apps.module.enabled.ts), not a WAHA_-prefixed one, and enabling apps
+      # requires the plain key to be set (checkApiKey there).
+      WAHA_APPS_ENABLED: 'True'
+      WAHA_APPS_ON: 'chatwoot'
+      REDIS_URL: 'redis://redis:6379'
+      # Sessions on PostgreSQL, matching production
+      WHATSAPP_SESSIONS_POSTGRESQL_URL: 'postgres://waha:waha@waha-postgres:5432/waha?sslmode=disable'
+    volumes:
+      - waha-sessions:/app/.sessions
+      - waha-media:/app/.media
+
+  waha-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: waha
+      POSTGRES_USER: waha
+      POSTGRES_PASSWORD: waha
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U waha']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    ports:
+      # Exposed so the zapo_contacts table can be inspected during the run
+      - '127.0.0.1:5433:5432/tcp'
+    volumes:
+      - waha-db:/var/lib/postgresql/data
+
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - redis-data:/data
+
+  chatwoot-postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: chatwoot
+      POSTGRES_USER: chatwoot
+      POSTGRES_PASSWORD: chatwoot
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U chatwoot']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    volumes:
+      - chatwoot-db:/var/lib/postgresql/data
+
+  chatwoot-redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  # Runs the migrations once and exits; the web service waits for it.
+  chatwoot-prepare:
+    image: chatwoot/chatwoot:v3.16.0
+    depends_on:
+      chatwoot-postgres:
+        condition: service_healthy
+    environment: &chatwoot-env
+      SECRET_KEY_BASE: 0e5b4a6f9c2d8e1a3b7c5d9f2a4e6b8c0d1e3f5a7b9c2d4e6f8a0b1c3d5e7f9a
+      RAILS_ENV: production
+      NODE_ENV: production
+      INSTALLATION_ENV: docker
+      POSTGRES_HOST: chatwoot-postgres
+      POSTGRES_DATABASE: chatwoot
+      POSTGRES_USERNAME: chatwoot
+      POSTGRES_PASSWORD: chatwoot
+      REDIS_URL: 'redis://chatwoot-redis:6379'
+      FRONTEND_URL: 'http://localhost:3002'
+      # Local validation only - no mail delivery configured
+      ENABLE_ACCOUNT_SIGNUP: 'true'
+      RAILS_LOG_TO_STDOUT: 'true'
+    entrypoint: ['docker/entrypoints/rails.sh']
+    command: ['bundle', 'exec', 'rails', 'db:chatwoot_prepare']
+    restart: 'no'
+
+  chatwoot:
+    image: chatwoot/chatwoot:v3.16.0
+    restart: unless-stopped
+    depends_on:
+      chatwoot-prepare:
+        condition: service_completed_successfully
+      chatwoot-redis:
+        condition: service_healthy
+    environment: *chatwoot-env
+    entrypoint: ['docker/entrypoints/rails.sh']
+    command: ['bundle', 'exec', 'rails', 's', '-p', '3000', '-b', '0.0.0.0']
+    ports:
+      - '127.0.0.1:3002:3000/tcp'
+
+  chatwoot-worker:
+    image: chatwoot/chatwoot:v3.16.0
+    restart: unless-stopped
+    depends_on:
+      chatwoot-prepare:
+        condition: service_completed_successfully
+      chatwoot-redis:
+        condition: service_healthy
+    environment: *chatwoot-env
+    entrypoint: ['docker/entrypoints/rails.sh']
+    command: ['bundle', 'exec', 'sidekiq', '-C', 'config/sidekiq.yml']
+
+volumes:
+  waha-db:
+  waha-sessions:
+  waha-media:
+  redis-data:
+  chatwoot-db:

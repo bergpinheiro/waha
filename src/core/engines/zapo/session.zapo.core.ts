@@ -30,8 +30,15 @@ import {
   parseMessageIdSerialized,
   SerializeMessageKey,
 } from '@waha/core/utils/ids';
-import { toCusFormat, toJID } from '@waha/core/utils/jids';
+import {
+  isJidGroup,
+  isLidUser,
+  normalizeJid,
+  toCusFormat,
+  toJID,
+} from '@waha/core/utils/jids';
 import { PairingCodeResponse } from '@waha/structures/auth.dto';
+import { MeInfo } from '@waha/structures/sessions.dto';
 import { DeleteStatusRequest, TextStatus } from '@waha/structures/status.dto';
 import {
   Channel,
@@ -254,6 +261,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
         return;
       }
       if (event.status === 'close' && event.isLogout) {
+        this.presence = null;
         this.status = WAHASessionStatus.FAILED;
       }
     });
@@ -390,6 +398,29 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
 
   async unpair(): Promise<void> {
     await this.client?.logout();
+  }
+
+  /**
+   * The account behind the session, which the dashboard and the session
+   * endpoints read. The library keeps it on the credentials, so it survives a
+   * restart without asking the server again.
+   *
+   * `id` is the phone-addressed jid without the device suffix, matching what
+   * the other engines report; `jid` keeps the device number.
+   */
+  public getSessionMeInfo(): MeInfo | null {
+    const credentials = this.client?.getCredentials();
+    if (!credentials?.meJid) {
+      return null;
+    }
+    return {
+      // The stored jid carries the device number; `id` drops it to match what
+      // the other engines report, while `jid` keeps it.
+      id: toCusFormat(normalizeJid(credentials.meJid)),
+      lid: credentials.meLid ? normalizeJid(credentials.meLid) : undefined,
+      jid: credentials.meJid,
+      pushName: credentials.pushName ?? credentials.meDisplayName,
+    };
   }
 
   async getScreenshot(): Promise<Buffer> {
@@ -692,10 +723,32 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     const selected = ids
       ? chats.filter((chat) => ids.includes(toJID(chat.id)))
       : chats;
-    for (const chat of selected) {
-      chat.lastMessage = await this.getLastMessage(chat.id);
+    return Promise.all(selected.map((chat) => this.fetchChatSummary(chat)));
+  }
+
+  /**
+   * Fills in what the thread store does not carry, following the same shape
+   * the other engines return: WhatsApp only names group and channel threads,
+   * so a 1:1 chat takes its name from the contact.
+   */
+  protected async fetchChatSummary(chat: ChatSummary): Promise<ChatSummary> {
+    if (!chat.name && !isJidGroup(toJID(chat.id))) {
+      chat.name = await this.resolveContactName(chat.id);
     }
-    return selected;
+    chat.picture = await this.getContactProfilePicture(chat.id, false);
+    chat.lastMessage = await this.getLastMessage(chat.id);
+    return chat;
+  }
+
+  private async resolveContactName(chatId: string): Promise<string | null> {
+    // Contacts are keyed by whichever jid addressed them, which today is
+    // usually the @lid one, so a phone-addressed chat is found through the
+    // phone column - which holds a full jid, not digits.
+    const jid = toJID(chatId);
+    const contact =
+      (await this.storage.contacts.getByJid(jid)) ??
+      (await this.storage.contacts.getByPhoneNumber(jid));
+    return contact?.displayName ?? contact?.pushName ?? null;
   }
 
   async getChatMessages(
@@ -1220,6 +1273,10 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     const type =
       presence === WAHAPresenceStatus.ONLINE ? 'available' : 'unavailable';
     await this.client.presence.send(type);
+    // The base setter keeps the account-wide value and drops chat ones, and
+    // this is what feeds session.presence - without it the session reports
+    // null forever, including under WAHA_PRESENCE_AUTO_ONLINE.
+    this.presence = presence;
   }
 
   @Activity()
@@ -1227,15 +1284,23 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
     await this.client.presence.subscribe(toJID(id));
   }
 
+  /**
+   * The library stores whichever jid addressed the contact, which today is
+   * usually the @lid one, and keeps the phone side as a full jid rather than
+   * digits. `id` is normalized to the phone-addressed chat id so it matches
+   * what the other engines return, falling back to the stored jid when the
+   * phone side is unknown.
+   */
   private toContact(contact: WaStoredContactRecord) {
+    const phoneJid = contact.phoneNumber;
     return {
-      id: toCusFormat(contact.jid),
+      id: toCusFormat(phoneJid ?? contact.jid),
       name: contact.displayName ?? null,
       pushname: contact.pushName ?? null,
-      // The store cross-indexes both identities, which the other engines have
-      // to resolve with an extra query.
-      lid: contact.lid ?? null,
-      number: contact.phoneNumber ?? null,
+      // Both identities are already indexed here, which the other engines
+      // have to resolve with an extra query.
+      lid: contact.lid ?? (isLidUser(contact.jid) ? contact.jid : null),
+      number: phoneJid ? phoneJid.split('@')[0] : null,
     };
   }
 
