@@ -144,6 +144,27 @@ const CACHE_PROVIDERS = {
 } as const;
 
 /**
+ * How long a parent message secret is kept, which is how far back a reaction,
+ * a vote or an edit can still be decrypted.
+ *
+ * The default is 30 minutes, on the reasoning that a later addon falls back to
+ * reading the secret out of the archived message. That fallback cannot work
+ * for what this engine sends: the library generates the secret after it emits
+ * the send event, so the message archived here never carries one, and the
+ * cache is the only copy. Half an hour would mean a reaction to our own
+ * message from this morning silently decrypting to nothing.
+ *
+ * It belongs on the backend rather than on createStore: the `memory.cacheTtlMs`
+ * option only reaches the in-memory cache, which is not the one in use here.
+ */
+const MESSAGE_SECRET_TTL = 30 * 24 * 60 * 60 * 1000;
+
+const CACHE_TTLS = { messageSecretMs: MESSAGE_SECRET_TTL } as const;
+
+/** How often expired cache rows are pruned; nothing prunes them otherwise. */
+const CLEANUP_INTERVAL = 60 * 60 * 1000;
+
+/**
  * Table/collection prefix so zapo's own schema never collides with WAHA's
  * inside a shared database.
  */
@@ -205,7 +226,10 @@ export class ZapoStoreFactoryCore {
     const filePath = store.getFilePath(name, SQLITE_FILE);
     const knex = buildSqliteKnex(filePath);
     const contacts = buildSqliteContactStore(knex);
-    const waStore = buildStore(createSqliteStore({ path: filePath }), contacts);
+    const waStore = buildStore(
+      createSqliteStore({ path: filePath, cacheTtlMs: CACHE_TTLS }),
+      contacts,
+    );
     return {
       store: waStore,
       contacts: contacts,
@@ -219,18 +243,24 @@ export class ZapoStoreFactoryCore {
     // so zapo's tables land there instead of in a database of its own.
     const knex = store.buildSessionKnex(name, 'Zapo/Contacts');
     const contacts = buildPsqlContactStore(knex);
-    const waStore = buildStore(
-      createPostgresStore({
-        pool: { connectionString: store.getSessionDbURL(name) },
-        tablePrefix: PREFIX,
-      }),
-      contacts,
-    );
+    const backend = createPostgresStore({
+      pool: { connectionString: store.getSessionDbURL(name) },
+      tablePrefix: PREFIX,
+      cacheTtlMs: CACHE_TTLS,
+      cleanup: { intervalMs: CLEANUP_INTERVAL },
+    });
+    const waStore = buildStore(backend, contacts);
+    // Postgres prunes nothing on its own - "without it the cache tables grow
+    // monotonically" - unlike Mongo, which expires them with a TTL index.
+    const cleanup = backend.startCleanup(name);
     return {
       store: waStore,
       contacts: contacts,
       chats: buildPsqlChatStore(knex),
-      close: closeStorage(waStore, knex),
+      close: async () => {
+        cleanup.stop();
+        await closeStorage(waStore, knex)();
+      },
     };
   }
 
@@ -240,7 +270,12 @@ export class ZapoStoreFactoryCore {
     const db = store.getSessionDb(name);
     const contacts = buildMongoContactStore(db);
     const waStore = buildStore(
-      createMongoStore({ db: db, collectionPrefix: PREFIX }),
+      // Mongo expires cache documents with a TTL index, so no poller here.
+      createMongoStore({
+        db: db,
+        collectionPrefix: PREFIX,
+        cacheTtlMs: CACHE_TTLS,
+      }),
       contacts,
     );
     return {
