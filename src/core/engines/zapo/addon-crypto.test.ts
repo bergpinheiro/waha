@@ -80,7 +80,7 @@ describe('ZAPO addon crypto', () => {
         iv: iv,
         ciphertext: ciphertext,
       });
-      expect(decrypted?.toString()).toEqual('a mensagem editada');
+      expect(decrypted?.plaintext.toString()).toEqual('a mensagem editada');
     });
 
     // What the library does today: it derives from the chat jid rather than
@@ -112,7 +112,7 @@ describe('ZAPO addon crypto', () => {
         iv: iv,
         ciphertext: ciphertext,
       });
-      expect(decrypted?.toString()).toEqual('a mensagem editada');
+      expect(decrypted?.plaintext.toString()).toEqual('a mensagem editada');
     });
 
     it('answers null when no candidate authenticates', () => {
@@ -227,7 +227,7 @@ describe('ZAPO addon crypto', () => {
         ciphertext: ciphertext,
       };
       expect(
-        decryptAddon({ ...input, withAdditionalData: true })?.toString(),
+        decryptAddon({ ...input, withAdditionalData: true })?.plaintext.toString(),
       ).toEqual('voto');
       // Without it the tag never matches, which is why it is not optional for
       // a poll vote.

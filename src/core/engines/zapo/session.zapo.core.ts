@@ -985,9 +985,12 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       // The voter, as the vote stanza names them.
       modificationSenders: this.senderCandidates(event.key),
       // whatsmeow reads the parent's sender off the poll key the voter wrote,
-      // not off what this side stored - that is the identity they addressed
-      // us by, and the one they derived from. The stored sender follows as a
-      // fallback, with the device suffix stripped, since it carries one.
+      // not off what this side stored: that is the identity they addressed us
+      // by, and the one they derived from. On a poll of ours in a lid chat
+      // that resolves to our own lid, which is what a live vote was measured
+      // to authenticate with. The stored sender and our other identities
+      // follow as fallbacks, with the device suffix stripped - it carries one
+      // while the derivation uses the plain form.
       parentSenders: this.senderCandidates(update.pollCreationMessageKey, [
         entry.senderJid,
         ...this.ourJids(),
@@ -1001,8 +1004,16 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       this.logger.warn({ targetId: targetId }, 'could not decrypt a poll vote');
       return null;
     }
+    this.logger.debug(
+      {
+        targetId: targetId,
+        parentSender: plaintext.parentSender,
+        modificationSender: plaintext.modificationSender,
+      },
+      'decrypted a poll vote',
+    );
 
-    const vote = proto.Message.PollVoteMessage.decode(plaintext);
+    const vote = proto.Message.PollVoteMessage.decode(plaintext.plaintext);
     return {
       kind: 'poll_vote',
       key: event.key,
@@ -1160,6 +1171,14 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       );
       return null;
     }
+    this.logger.debug(
+      {
+        targetId: targetId,
+        parentSender: plaintext.parentSender,
+        modificationSender: plaintext.modificationSender,
+      },
+      'decrypted an edit made on this account',
+    );
 
     return this.toMessageEdited({
       key: event.key,
@@ -1167,7 +1186,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       targetMessageId: targetId,
       decrypted: {
         kind: 'message_edit',
-        message: proto.Message.decode(plaintext),
+        message: proto.Message.decode(plaintext.plaintext),
       },
     });
   }

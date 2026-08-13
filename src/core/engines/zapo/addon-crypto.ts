@@ -71,11 +71,20 @@ export interface AddonDecryptionInput {
   readonly withAdditionalData?: boolean;
 }
 
+export interface AddonDecryption {
+  readonly plaintext: Buffer;
+  /** The pair that authenticated, which is worth knowing: it says which of
+   * the identities in play the sender actually derived from. */
+  readonly parentSender: string;
+  readonly modificationSender: string;
+}
+
 /**
- * Returns the plaintext, or null when no candidate authenticates - which is a
- * wrong key rather than an error, so it is reported and not thrown.
+ * Returns the plaintext and the pair it was derived from, or null when no
+ * candidate authenticates - a wrong key rather than an error, so it is
+ * reported and not thrown.
  */
-export function decryptAddon(input: AddonDecryptionInput): Buffer | null {
+export function decryptAddon(input: AddonDecryptionInput): AddonDecryption | null {
   if (!input.stanzaId || !input.secret?.length) {
     return null;
   }
@@ -100,7 +109,11 @@ export function decryptAddon(input: AddonDecryptionInput): Buffer | null {
         additionalData,
       );
       if (plaintext) {
-        return plaintext;
+        return {
+          plaintext: plaintext,
+          parentSender: parentSender,
+          modificationSender: modificationSender,
+        };
       }
     }
   }
