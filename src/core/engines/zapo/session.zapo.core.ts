@@ -22,7 +22,11 @@ import {
 } from '@waha/core/engines/zapo/store/ZapoStoreFactoryCore';
 import { NotImplementedByEngineError } from '@waha/core/exceptions';
 import { extractBody } from '@waha/core/engines/noweb/session.noweb.core';
-import { extractMediaContent } from '@waha/core/engines/noweb/utils';
+import {
+  convertProtobufToPlainObject,
+  extractMediaContent,
+  replaceLongsWithNumber,
+} from '@waha/core/engines/noweb/utils';
 import { extractWALocation } from '@waha/core/engines/waproto/locaiton';
 import { extractVCards } from '@waha/core/engines/waproto/vcards';
 import { getContextInfo } from '@waha/core/utils/pwa';
@@ -143,6 +147,27 @@ const FORWARDED_EVENTS = [
   'stanza_error',
 ] as const;
 
+/**
+ * Byte fields come back as Uint8Array and serialize as a key-per-byte map;
+ * GOWS emits base64 for the same fields, so consumers see one representation.
+ */
+function bytesToBase64(value: any): any {
+  if (value instanceof Uint8Array || Buffer.isBuffer(value)) {
+    return Buffer.from(value).toString('base64');
+  }
+  if (Array.isArray(value)) {
+    return value.map((item) => bytesToBase64(item));
+  }
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const key of Object.keys(value)) {
+      out[key] = bytesToBase64(value[key]);
+    }
+    return out;
+  }
+  return value;
+}
+
 interface EngineEvent {
   event: string;
   data: any;
@@ -261,6 +286,23 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       this.status = WAHASessionStatus.SCAN_QR_CODE;
     });
 
+    // The account-wide limits the library exposes, pushed as they change and
+    // queried once on connect - the same two the other engines report on `me`.
+    this.on('mex_notification', (event) => {
+      if (event?.kind !== 'message_capping') {
+        return;
+      }
+      this.messageCapping.update({
+        cappingStatus: event.cappingStatus,
+        totalQuota: event.totalQuota,
+        usedQuota: event.usedQuota,
+        cycleStart: event.cycleStartTimestamp,
+        cycleEnd: event.cycleEndTimestamp,
+        mvStatus: event.mvStatus,
+        oteStatus: event.oteStatus,
+      });
+    });
+
     this.on('auth_paired', () => {
       this.qr.save('');
       this.status = WAHASessionStatus.WORKING;
@@ -274,6 +316,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       // and auto-restart never fires.
       if (event.status === 'open') {
         this.status = WAHASessionStatus.WORKING;
+        void this.refreshAccountLimits();
         return;
       }
       if (event.status !== 'close' || this.stopping) {
@@ -432,19 +475,37 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       fromMe: Boolean(key.fromMe),
       source: this.getMessageSource(key.id),
       body: extractBody(content) || null,
-      // In groups the sender is the participant; in 1:1 it is the chat itself.
-      to: key.fromMe ? chatId : me?.id ?? '',
+      // Only a group message carries a destination; a 1:1 leaves it null,
+      // which is what the other protocol engines return.
+      to: key.isGroup ? chatId : null,
       participant: key.participant ? toCusFormat(key.participant) : null,
       hasMedia: Boolean(mediaContent),
       media: null,
       mediaUrl: undefined,
-      ack: WAMessageAck.SERVER,
-      ackName: WAMessageAck[WAMessageAck.SERVER],
+      // Receiving it means it reached this device, which is the ack the other
+      // protocol engines report for an inbound message.
+      ack: WAMessageAck.DEVICE,
+      ackName: WAMessageAck[WAMessageAck.DEVICE],
       location: extractWALocation(content),
       vCards: extractVCards(content),
       replyTo: this.extractReplyTo(content),
-      _data: event,
+      _data: this.toPlainData(event),
     } as WAMessage;
+  }
+
+  /**
+   * The raw event as a consumer can parse it.
+   *
+   * The library returns protobuf values as Long objects, byte arrays and
+   * empty repeated fields, so `_data` would carry `{low, high, unsigned}`
+   * where the other engines carry a number, and a key-per-byte map where they
+   * carry base64 - the same field with a different type per engine. Uses the
+   * two helpers NOWEB already applies, plus base64 for bytes to match GOWS.
+   */
+  private toPlainData(event: any): any {
+    const plain = convertProtobufToPlainObject(bytesToBase64(event));
+    replaceLongsWithNumber(plain);
+    return plain;
   }
 
   /** Quoted message, in the shape the other engines expose it. */
@@ -538,7 +599,7 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       location: extractWALocation(content),
       vCards: extractVCards(content),
       replyTo: this.extractReplyTo(content),
-      _data: event,
+      _data: this.toPlainData(event),
     } as WAMessage;
   }
 
@@ -631,6 +692,10 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       lid: credentials.meLid ? normalizeJid(credentials.meLid) : undefined,
       jid: credentials.meJid,
       pushName: credentials.pushName ?? credentials.meDisplayName,
+      // Part of MeInfo and reported by the other engines. The values come from
+      // the trackers, fed on connect and by the capping push notification.
+      reachoutTimelock: this.reachoutTimelock.value,
+      messageCapping: this.messageCapping.value,
     };
   }
 
@@ -1024,6 +1089,47 @@ export class WhatsappSessionZapoCore extends WhatsappSession {
       return null;
     }
     return this.toChatSummary({ jid: jid, name: indexed.name });
+  }
+
+  /**
+   * Reads the reachout timelock and the new-chat quota once the session is up.
+   * Both are account-wide and change on their own schedule, so a query on
+   * connect plus the capping push notification keeps them current.
+   */
+  private async refreshAccountLimits() {
+    try {
+      const timelock = await this.client.message.getReachoutTimelock();
+      this.reachoutTimelock.update(
+        timelock?.isActive
+          ? {
+              isActive: true,
+              enforcementType: timelock.enforcementType as any,
+              timeEnforcementEnds: timelock.enforcementEndsAt,
+            }
+          : null,
+      );
+    } catch (error) {
+      this.logger.warn(
+        { error: error },
+        'Failed to read the reachout timelock',
+      );
+    }
+    try {
+      const capping = await this.client.message.getNewChatMessageCapping();
+      this.messageCapping.update({
+        cappingStatus: capping?.cappingStatus as any,
+        totalQuota: capping?.totalQuota,
+        usedQuota: capping?.usedQuota,
+        // An absent cycle comes back as 0 here and as null from the other
+        // engines; null is the shape consumers already handle.
+        cycleStart: capping?.cycleStartAt || null,
+        cycleEnd: capping?.cycleEndAt || null,
+        mvStatus: capping?.mvStatus,
+        oteStatus: capping?.oteStatus,
+      });
+    } catch (error) {
+      this.logger.warn({ error: error }, 'Failed to read the message capping');
+    }
   }
 
   /**
