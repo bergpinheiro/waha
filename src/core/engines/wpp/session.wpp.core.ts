@@ -1513,14 +1513,15 @@ export class WhatsappSessionWPPCore extends WhatsappSession {
   }
 
   @Activity()
-  public promoteParticipantsToAdmin(
+  public async promoteParticipantsToAdmin(
     id: string,
     request: ParticipantsRequest,
   ): Promise<boolean> {
     const participants = request.participants.map((participant) =>
       this.ensureSuffix(participant.id),
     );
-    return this.wpp!.promoteParticipant(this.ensureSuffix(id), participants);
+    await this.wpp!.promoteParticipant(this.ensureSuffix(id), participants);
+    return true;
   }
 
   @Activity()
