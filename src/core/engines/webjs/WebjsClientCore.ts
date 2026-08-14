@@ -8,6 +8,7 @@ import { TextStatus } from '@waha/structures/status.dto';
 import { sleep } from '@waha/utils/promiseTimeout';
 import { EventEmitter } from 'events';
 import * as lodash from 'lodash';
+import { Logger } from 'pino';
 import { Page } from 'puppeteer';
 import { Client, Events, Message as WebjsMessage } from 'whatsapp-web.js';
 import { Message } from 'whatsapp-web.js/src/structures';
@@ -93,21 +94,31 @@ function extractReactionsByMessageKey(
 export class WebjsClientCore extends Client {
   public events = new EventEmitter();
   private wpage: WPage = null;
+  private injecting: Promise<void> = null;
 
   constructor(
     options,
     protected tags: boolean,
+    protected logger: Logger,
   ) {
     super(options);
     // Wait until it's READY and inject more utils
-    this.on(Events.AUTHENTICATED, async () => {
-      await this.attachCustomEventListeners();
-      await this.injectWaha();
-    });
-    this.on(Events.READY, async () => {
-      await this.attachCustomEventListeners();
-      await this.injectWaha();
-    });
+    // AUTHENTICATED and READY fire back to back - run one injection for both
+    this.on(Events.AUTHENTICATED, () => this.injectUtils());
+    this.on(Events.READY, () => this.injectUtils());
+  }
+
+  private injectUtils(): Promise<void> {
+    if (this.injecting) {
+      return this.injecting;
+    }
+    this.injecting = this.attachCustomEventListeners()
+      .then(() => this.injectWaha())
+      .catch((err) => this.logger.error(err, 'Failed to inject utils'))
+      .finally(() => {
+        this.injecting = null;
+      });
+    return this.injecting;
   }
 
   async initialize() {

@@ -326,7 +326,11 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
     const clientOptions = this.getClientOptions();
     clientOptions.authStrategy = authStrategy;
     this.addProxyConfig(clientOptions);
-    return new WebjsClientCore(clientOptions, this.getWebjsTagsFlag());
+    return new WebjsClientCore(
+      clientOptions,
+      this.getWebjsTagsFlag(),
+      this.logger,
+    );
   }
 
   protected getWebjsTagsFlag() {
