@@ -189,4 +189,23 @@ export class SessionTools extends McpController {
       url: `/api/sessions/${session}/capping`,
     });
   }
+
+  @Tool('sessions-timelock', {
+    title: 'Get reachout timelock',
+    description:
+      'Fetch the account reachout timelock state ' +
+      '(the restriction behind error 463 when messaging new contacts).',
+    inputSchema: SessionNameInput,
+    annotations: {
+      readOnlyHint: true,
+      destructiveHint: false,
+      idempotentHint: true,
+    },
+  })
+  async timelock({ session }: z.infer<typeof SessionNameInput>) {
+    return this.textRequest({
+      method: 'GET',
+      url: `/api/sessions/${session}/timelock`,
+    });
+  }
 }

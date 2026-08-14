@@ -130,6 +130,7 @@ import { BrowserTraceQuery } from '@waha/structures/server.debug.dto';
 import {
   MeInfo,
   MessageCappingData,
+  ReachoutTimelockData,
   ReachoutTimelockEnforcementType,
 } from '@waha/structures/sessions.dto';
 import { EnsureSeconds } from '@waha/utils/timehelper';
@@ -629,25 +630,7 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
 
   protected listenConnectionEvents() {
     this.whatsapp.on(Events.REACHOUT_TIMELOCK_UPDATE, (record: any) => {
-      if (!record) {
-        // The app removes the stored record when the enforcement is lifted (or there is none)
-        const current = this.reachoutTimelock.value;
-        if (current?.isActive) {
-          this.reachoutTimelock.update({ ...current, isActive: false });
-        }
-        return;
-      }
-      const enforcementType =
-        record.enforcement_type ?? ReachoutTimelockEnforcementType.DEFAULT;
-      this.reachoutTimelock.update({
-        enforcementType: enforcementType as ReachoutTimelockEnforcementType,
-        // The record only exists while the enforcement is active
-        isActive: true,
-        // The app stores 'time_enforcement_ends' as unix milliseconds
-        timeEnforcementEnds: record.time_enforcement_ends
-          ? EnsureSeconds(record.time_enforcement_ends)
-          : null,
-      });
+      this.updateReachoutTimelockFromRecord(record);
     });
 
     this.whatsapp.on(Events.MESSAGE_CAPPING_UPDATE, (record: any) => {
@@ -915,6 +898,49 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
     // Keep the tracker in sync so MeInfo and 'session.status' reflect the fetch
     this.messageCapping.update(capping);
     return capping;
+  }
+
+  @Activity()
+  public async fetchReachoutTimelock(): Promise<ReachoutTimelockData> {
+    const record = await this.whatsapp.fetchReachoutTimelock();
+    if (record === undefined) {
+      throw new NotImplementedByEngineError(
+        'Reachout timelock is not available in the current WhatsApp Web version',
+      );
+    }
+    return this.updateReachoutTimelockFromRecord(record);
+  }
+
+  // Applies the stored 'WAReachoutTimelockState' record (or its removal) to the tracker,
+  // so MeInfo and 'session.status' reflect it, and returns the resulting state
+  private updateReachoutTimelockFromRecord(record: any): ReachoutTimelockData {
+    if (!record) {
+      // The app removes the stored record when the enforcement is lifted (or there is none)
+      const current = this.reachoutTimelock.value;
+      if (current?.isActive) {
+        this.reachoutTimelock.update({ ...current, isActive: false });
+      }
+      return (
+        this.reachoutTimelock.value ?? {
+          enforcementType: ReachoutTimelockEnforcementType.DEFAULT,
+          isActive: false,
+          timeEnforcementEnds: null,
+        }
+      );
+    }
+    const enforcementType =
+      record.enforcement_type ?? ReachoutTimelockEnforcementType.DEFAULT;
+    const timelock: ReachoutTimelockData = {
+      enforcementType: enforcementType as ReachoutTimelockEnforcementType,
+      // The record only exists while the enforcement is active
+      isActive: true,
+      // The app stores 'time_enforcement_ends' as unix milliseconds
+      timeEnforcementEnds: record.time_enforcement_ends
+        ? EnsureSeconds(record.time_enforcement_ends)
+        : null,
+    };
+    this.reachoutTimelock.update(timelock);
+    return timelock;
   }
 
   /**

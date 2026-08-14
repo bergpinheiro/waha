@@ -139,6 +139,7 @@ import {
   MeInfo,
   MessageCappingData,
   ProxyConfig,
+  ReachoutTimelockData,
   SessionConfig,
 } from '@waha/structures/sessions.dto';
 import {
@@ -2297,6 +2298,17 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
     // Keep the tracker in sync so MeInfo and 'session.status' reflect the fetch
     this.messageCapping.update(capping);
     return capping;
+  }
+
+  @Activity()
+  public async fetchReachoutTimelock(): Promise<ReachoutTimelockData> {
+    const response = await promisify(this.client.FetchReachoutTimelock)(
+      this.session,
+    );
+    const timelock = parseGowsReachoutTimelock(parseJson(response));
+    // Keep the tracker in sync so MeInfo and 'session.status' reflect the fetch
+    this.reachoutTimelock.update(timelock);
+    return timelock;
   }
 
   public async getContacts(pagination: PaginationParams) {

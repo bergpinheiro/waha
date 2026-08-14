@@ -35,6 +35,7 @@ import {
   ListSessionsQuery,
   MeInfo,
   MessageCappingData,
+  ReachoutTimelockData,
   SessionCreateRequest,
   SessionDTO,
   SessionExpand,
@@ -113,6 +114,23 @@ class SessionsController {
     @SessionParam session: WhatsappSession,
   ): Promise<MessageCappingData> {
     return session.fetchMessageCapping();
+  }
+
+  @Get(':session/timelock')
+  @SessionApiParam
+  @ApiOperation({
+    summary: 'Fetch the account reachout timelock state',
+    description:
+      'Fetch a fresh reachout timelock state from WhatsApp - the restriction ' +
+      'behind "server returned error 463" when messaging new contacts. ' +
+      'The same value is also available under me.reachoutTimelock in the session ' +
+      'info, and changes are pushed through the session.status event.',
+  })
+  @CheckPolicies(CanSession(Action.Read, FromParam('session')))
+  fetchReachoutTimelock(
+    @SessionParam session: WhatsappSession,
+  ): Promise<ReachoutTimelockData> {
+    return session.fetchReachoutTimelock();
   }
 
   @Post('')

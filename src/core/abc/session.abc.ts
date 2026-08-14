@@ -118,6 +118,7 @@ import {
   MessageCappingData,
   MessageCappingStatus,
   ProxyConfig,
+  ReachoutTimelockData,
   SessionConfig,
 } from '../../structures/sessions.dto';
 import {
@@ -527,6 +528,10 @@ export abstract class WhatsappSession {
   }
 
   public fetchMessageCapping(): Promise<MessageCappingData> {
+    throw new NotImplementedByEngineError();
+  }
+
+  public fetchReachoutTimelock(): Promise<ReachoutTimelockData> {
     throw new NotImplementedByEngineError();
   }
 

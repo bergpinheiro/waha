@@ -177,6 +177,7 @@ import { WAMessage, WAMessageReaction } from '@waha/structures/responses.dto';
 import {
   MeInfo,
   MessageCappingData,
+  ReachoutTimelockData,
   ReachoutTimelockEnforcementType,
 } from '@waha/structures/sessions.dto';
 import { EnsureSeconds } from '@waha/utils/timehelper';
@@ -572,20 +573,7 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
     this.sock.ev.on('connection.update', async (update) => {
       const { connection, lastDisconnect, qr, isNewLogin } = update;
       if (update.reachoutTimeLock) {
-        const timelock = update.reachoutTimeLock;
-        const enforcementType =
-          timelock.enforcementType ?? ReachoutTimelockEnforcementType.DEFAULT;
-        let timeEnforcementEnds: number | null = null;
-        if (timelock.timeEnforcementEnds) {
-          timeEnforcementEnds = EnsureSeconds(
-            timelock.timeEnforcementEnds.getTime(),
-          );
-        }
-        this.reachoutTimelock.update({
-          enforcementType: enforcementType as ReachoutTimelockEnforcementType,
-          isActive: timelock.isActive === true,
-          timeEnforcementEnds: timeEnforcementEnds,
-        });
+        this.updateReachoutTimelockFromState(update.reachoutTimeLock);
       }
       if (isNewLogin) {
         this.restartClient();
@@ -1056,6 +1044,30 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
     // Keep the tracker in sync so MeInfo and 'session.status' reflect the fetch
     this.messageCapping.update(capping);
     return capping;
+  }
+
+  @Activity()
+  public async fetchReachoutTimelock(): Promise<ReachoutTimelockData> {
+    const state = await this.sock.fetchAccountReachoutTimelock();
+    return this.updateReachoutTimelockFromState(state);
+  }
+
+  private updateReachoutTimelockFromState(timelock: any): ReachoutTimelockData {
+    const enforcementType =
+      timelock.enforcementType ?? ReachoutTimelockEnforcementType.DEFAULT;
+    let timeEnforcementEnds: number | null = null;
+    if (timelock.timeEnforcementEnds) {
+      timeEnforcementEnds = EnsureSeconds(
+        timelock.timeEnforcementEnds.getTime(),
+      );
+    }
+    const data: ReachoutTimelockData = {
+      enforcementType: enforcementType as ReachoutTimelockEnforcementType,
+      isActive: timelock.isActive === true,
+      timeEnforcementEnds: timeEnforcementEnds,
+    };
+    this.reachoutTimelock.update(data);
+    return data;
   }
 
   /**
