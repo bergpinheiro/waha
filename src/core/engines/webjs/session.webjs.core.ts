@@ -152,6 +152,7 @@ import {
 import { PaginatorInMemory } from '@waha/utils/Paginator';
 import { promiseTimeout, sleep, waitUntil } from '@waha/utils/promiseTimeout';
 import { SingleDelayedJobRunner } from '@waha/utils/SingleDelayedJobRunner';
+import { SinglePeriodicJobRunner } from '@waha/utils/SinglePeriodicJobRunner';
 import { TmpDir } from '@waha/utils/tmpdir';
 import * as lodash from 'lodash';
 import * as path from 'path';
@@ -230,6 +231,7 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
 
   private startDelayedJob: SingleDelayedJobRunner;
   private engineStateCheckDelayedJob: SingleDelayedJobRunner;
+  private whatsNewModalJob: SinglePeriodicJobRunner;
   private shouldRestart: boolean;
   private lastQRDate: Date = null;
   private static readonly REACTION_MAX_AGE_MS = 2 * 24 * 60 * 60 * 1000;
@@ -253,6 +255,13 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
       'engine-state-check',
       2 * SECOND,
       this.logger,
+    );
+    // Hide the "What's New" modal that blocks app init after QR login
+    this.whatsNewModalJob = new SinglePeriodicJobRunner(
+      'hide-whats-new-modal',
+      SECOND,
+      this.logger,
+      false,
     );
   }
 
@@ -424,6 +433,8 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
             console.log(`url is ${location.href}`),
           );
         }
+
+        this.startWhatsNewModalJob();
       })
       .catch((error) => {
         this.logger.error(error);
@@ -492,6 +503,7 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
     this.cleanupPresenceTimeout();
     this.presence = null;
     this.engineStateCheckDelayedJob.cancel();
+    this.whatsNewModalJob.stop();
     this.whatsapp?.removeAllListeners();
     this.whatsapp?.pupBrowser?.removeAllListeners();
     this.whatsapp?.pupPage?.removeAllListeners();
@@ -590,6 +602,29 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
         this.logger.debug({ event: log }, `WEBJS event`);
       });
     }
+  }
+
+  private startWhatsNewModalJob() {
+    // The "What's New" modal can block app init right after QR login, so the session never leaves STARTING
+    // https://github.com/devlikeapro/waha/issues/2217
+    this.whatsNewModalJob.start(async () => {
+      let hidden = false;
+      try {
+        hidden = await this.whatsapp.hideWhatsNewModal();
+      } catch (err) {
+        // The page navigates during login, evaluate() can fail - retry on the next tick
+        this.logger.debug(`Failed to hide "What's New" modal: ${err}`);
+        return;
+      }
+      if (hidden) {
+        this.logger.info(`"What's New" modal has been dismissed`);
+        return;
+      }
+      // The cool-off is stored user-scoped, so keep re-checking until it holds after login
+      if (this.status === WAHASessionStatus.WORKING) {
+        this.whatsNewModalJob.stop();
+      }
+    });
   }
 
   protected listenConnectionEvents() {

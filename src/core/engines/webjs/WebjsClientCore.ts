@@ -147,6 +147,37 @@ export class WebjsClientCore extends Client {
     });
   }
 
+  /**
+   * @result indicating whether the "What's New" auto-modal was prevented or dismissed.
+   */
+  hideWhatsNewModal(): Promise<boolean> {
+    return this.pupPage.evaluate(() => {
+      // Module registry is not available until the app bundle has loaded
+      if (typeof window.require !== 'function') {
+        return false;
+      }
+      const WAWebWhatsNewNux = window.require('WAWebWhatsNewNux');
+      if (!WAWebWhatsNewNux) {
+        return false;
+      }
+      // user prefs are not writable before login
+      const WAWebUserPrefsMeUser = window.require('WAWebUserPrefsMeUser');
+      if (!WAWebUserPrefsMeUser.getMaybeMePnUser()) {
+        return false;
+      }
+      const nux = WAWebWhatsNewNux.createWhatsNewNux();
+      if (!nux.shouldShow()) {
+        return false;
+      }
+      // Bump the dismiss count and start the cool-off, so the app never auto-opens the modal
+      nux.dismiss();
+      // If the modal has already opened - close the topmost modal (no-op when nothing is open)
+      const WAWebModalManager = window.require('WAWebModalManager');
+      WAWebModalManager.ModalManager.close();
+      return true;
+    });
+  }
+
   async attachCustomEventListeners() {
     await exposeFunctionIfAbsent(
       this.pupPage,
