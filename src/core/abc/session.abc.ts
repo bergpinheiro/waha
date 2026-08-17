@@ -90,6 +90,7 @@ import {
   MessageVideoRequest,
   MessageVoiceRequest,
   SendSeenRequest,
+  WANumberExistResult,
 } from '../../structures/chatting.dto';
 import {
   ContactQuery,
@@ -143,8 +144,28 @@ import { fetchBuffer } from '@waha/utils/fetch';
 import {
   PRESENCE_AUTO_ONLINE,
   PRESENCE_AUTO_ONLINE_DURATION_SECONDS,
+  BR_PHONE_NORMALIZE,
+  BR_PHONE_STRICT,
 } from '@waha/core/env';
 import { Activity } from '@waha/core/abc/activity';
+import {
+  BR_PHONE_CACHE_TTL_SECONDS,
+  BR_PHONE_DDD_LOOKUP_MAX_DEFAULT,
+  BR_PHONE_DDD_LOOKUP_MIN_DEFAULT,
+  BR_PHONE_NEGATIVE_CACHE_TTL_SECONDS,
+  extractPhoneDigits,
+  generateBrazilMobileLookupCandidates,
+  getBrazilPhoneCacheKeys,
+  isBrazilCountryCode,
+  isBrazilMobile,
+  isMalformedBrazilPhone,
+  needsBrazilWhatsAppLookup,
+  normalizeBrazilMobileForSendDigits,
+  normalizeBrazilTollFreeDigits,
+  shouldSkipBrazilPhoneNormalization,
+} from '@waha/core/utils/brPhone';
+import { toJID } from '@waha/core/utils/jids';
+import { UnprocessableEntityException } from '@nestjs/common';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const qrcode = require('qrcode-terminal');
@@ -220,6 +241,15 @@ export abstract class WhatsappSession {
   protected profilePictures: NodeCache = new NodeCache({
     stdTTL: 24 * 60 * 60, // 1 day
   });
+  // BR phone resolution cache. Stores the resolved canonical digits. Verified
+  // hits use the long TTL; unverified best-guesses use the short (negative) TTL
+  // so we re-check later without re-running the WhatsApp lookup every send.
+  protected brPhoneCache: NodeCache = new NodeCache({
+    stdTTL: BR_PHONE_CACHE_TTL_SECONDS,
+  });
+  // Single-flight guard: concurrent first-time resolutions of the same number
+  // share one in-flight WhatsApp lookup instead of each firing its own usync.
+  private brPhoneInflight: Map<string, Promise<string>> = new Map();
 
   // Save sent messages ids in cache so we can determine if a message was sent
   // via API or APP
@@ -1269,6 +1299,273 @@ export abstract class WhatsappSession {
    */
   protected ensureSuffix(phone) {
     return ensureSuffix(phone);
+  }
+
+  // Cached values are full chat ids ('5511...@c.us' or '123@lid'), never bare
+  // digits: stripping the suffix loses which addressing form was resolved, and
+  // re-adding '@c.us' to LID digits builds an id that addresses nobody.
+  protected cacheBrazilPhoneResolution(
+    inputDigits: string,
+    resolvedChatId: string,
+  ) {
+    const keys = getBrazilPhoneCacheKeys(inputDigits);
+    for (const key of keys) {
+      this.brPhoneCache.set(key, resolvedChatId);
+    }
+  }
+
+  // Cache an unverified best-guess (e.g. WhatsApp said it does not exist, but we
+  // send anyway). Short TTL so a number registered later is re-checked soon.
+  protected cacheBrazilPhoneUnverified(
+    inputDigits: string,
+    bestGuessChatId: string,
+  ) {
+    const keys = getBrazilPhoneCacheKeys(inputDigits);
+    for (const key of keys) {
+      this.brPhoneCache.set(
+        key,
+        bestGuessChatId,
+        BR_PHONE_NEGATIVE_CACHE_TTL_SECONDS,
+      );
+    }
+  }
+
+  // Cache a confirmed-negative (strict mode): the number does not exist on
+  // WhatsApp. Stored as '' with the short TTL so retries re-check after a while.
+  protected cacheBrazilPhoneNegative(inputDigits: string) {
+    const keys = getBrazilPhoneCacheKeys(inputDigits);
+    for (const key of keys) {
+      this.brPhoneCache.set(key, '', BR_PHONE_NEGATIVE_CACHE_TTL_SECONDS);
+    }
+  }
+
+  // undefined = cache miss, '' = confirmed-negative (strict), otherwise the
+  // resolved chat id (verified canonical or unverified best-guess).
+  protected getCachedBrazilPhoneResolution(digits: string): string | undefined {
+    return this.brPhoneCache.get<string>(digits);
+  }
+
+  // Optional per-engine hook: resolve a candidate against the local contact
+  // store without hitting WhatsApp servers. Default: no local store available.
+  protected async lookupKnownChatId(
+    candidates: string[],
+  ): Promise<string | null> {
+    void candidates;
+    return null;
+  }
+
+  protected async resolveOutboundChatId(
+    chatId: string,
+    opts: { validate?: boolean } = {},
+  ): Promise<string> {
+    // validate=true (default): full resolution incl. WhatsApp lookup, used by
+    // message-send paths. validate=false: local-only (cache + static + store),
+    // never hits the network and never throws, used by read/presence ops.
+    const validate = opts.validate ?? true;
+    const withSuffix = this.ensureSuffix(chatId);
+    if (!BR_PHONE_NORMALIZE) {
+      return withSuffix;
+    }
+    if (shouldSkipBrazilPhoneNormalization(withSuffix)) {
+      return withSuffix;
+    }
+
+    const digits = extractPhoneDigits(withSuffix);
+    // Brazilian toll-free (0800): deterministic rewrite to the stored form, no
+    // lookup. Handled before the country-code gate because the dialed form
+    // ('0800...') has no 55 prefix.
+    const tollFree = normalizeBrazilTollFreeDigits(digits);
+    if (tollFree) {
+      return ensureSuffix(tollFree);
+    }
+    // Only Brazilian numbers (country code 55) are handled here.
+    if (!isBrazilCountryCode(digits)) {
+      return withSuffix;
+    }
+    // Tier 0: malformed Brazilian numbers (e.g. 55859912). Hard error only on
+    // the send path; read/presence ops just pass it through untouched.
+    if (isMalformedBrazilPhone(digits)) {
+      if (validate) {
+        throw new UnprocessableEntityException(
+          `Invalid Brazilian phone number '${withSuffix}'.`,
+        );
+      }
+      return withSuffix;
+    }
+    // Landlines and already-valid non-mobile numbers are left untouched.
+    if (!isBrazilMobile(digits)) {
+      return withSuffix;
+    }
+
+    // Tier 1: in-memory cache. undefined = miss, '' = confirmed-negative
+    // (strict mode), otherwise the resolved/best-guess chat id, stored ready
+    // to use - no suffix is re-derived here.
+    const cached = this.getCachedBrazilPhoneResolution(digits);
+    if (cached !== undefined) {
+      if (cached === '') {
+        if (validate) {
+          throw new UnprocessableEntityException(
+            `Brazilian mobile phone number '${withSuffix}' does not exist on WhatsApp.`,
+          );
+        }
+        return withSuffix;
+      }
+      return cached;
+    }
+
+    // DDD below the lookup range: static 9th-digit rule, no network needed.
+    if (
+      !needsBrazilWhatsAppLookup(
+        digits,
+        BR_PHONE_DDD_LOOKUP_MIN_DEFAULT,
+        BR_PHONE_DDD_LOOKUP_MAX_DEFAULT,
+      )
+    ) {
+      const normalized = ensureSuffix(
+        normalizeBrazilMobileForSendDigits(digits),
+      );
+      this.cacheBrazilPhoneResolution(digits, normalized);
+      return normalized;
+    }
+
+    const candidates = generateBrazilMobileLookupCandidates(digits);
+
+    // Tier 2: local contact/LID store (engine-specific), no network.
+    const fromStore = await this.lookupKnownChatId(candidates);
+    if (fromStore) {
+      this.cacheBrazilPhoneResolution(digits, fromStore);
+      this.logger.debug(
+        `BR mobile '${withSuffix}' resolved locally to '${fromStore}' (no WhatsApp lookup).`,
+      );
+      return fromStore;
+    }
+
+    // Read/presence ops never reach the network: return the best-guess as-is.
+    if (!validate) {
+      return withSuffix;
+    }
+
+    // Tier 3: WhatsApp lookup as last resort, de-duplicated via single-flight.
+    return this.resolveBrazilPhoneViaWhatsApp(digits, withSuffix, candidates);
+  }
+
+  // Single-flight wrapper around the WhatsApp existence lookup so concurrent
+  // sends to the same new number trigger a single usync, not one per message.
+  private resolveBrazilPhoneViaWhatsApp(
+    digits: string,
+    withSuffix: string,
+    candidates: string[],
+  ): Promise<string> {
+    const key = getBrazilPhoneCacheKeys(digits).sort().join('|');
+    const inflight = this.brPhoneInflight.get(key);
+    if (inflight) {
+      return inflight;
+    }
+    const promise = this.lookupBrazilPhoneOnWhatsApp(
+      digits,
+      withSuffix,
+      candidates,
+    ).finally(() => this.brPhoneInflight.delete(key));
+    this.brPhoneInflight.set(key, promise);
+    return promise;
+  }
+
+  private async lookupBrazilPhoneOnWhatsApp(
+    digits: string,
+    withSuffix: string,
+    candidates: string[],
+  ): Promise<string> {
+    this.logger.debug(
+      `BR mobile '${withSuffix}' not found locally, performing WhatsApp lookup for: ${candidates.join(', ')}`,
+    );
+    let lookupFailed = false;
+    for (const candidate of candidates) {
+      let result: WANumberExistResult;
+      try {
+        result = await this.checkNumberStatus({
+          phone: candidate,
+          session: this.name,
+        });
+      } catch (error) {
+        lookupFailed = true;
+        this.logger.warn(
+          `Failed to verify Brazilian mobile candidate '${candidate}': ${error}`,
+        );
+        continue;
+      }
+      if (result?.numberExists && result.chatId) {
+        // Cache the chat id exactly as resolved. Engines answer with the phone
+        // number whenever they can and fall back to a LID for accounts that
+        // have no phone form - both are routable, and neither survives being
+        // reduced to digits.
+        this.cacheBrazilPhoneResolution(digits, result.chatId);
+        return result.chatId;
+      }
+    }
+
+    // Could not validate due to network/engine error: send as-is, do not cache.
+    if (lookupFailed) {
+      this.logger.warn(
+        `Could not validate Brazilian mobile number '${withSuffix}', sending as-is. Tried: ${candidates.join(', ')}`,
+      );
+      return withSuffix;
+    }
+
+    // Verified not to exist in any form.
+    if (BR_PHONE_STRICT) {
+      // Strict (opt-in via WAHA_BR_PHONE_STRICT): reject so the caller knows.
+      this.cacheBrazilPhoneNegative(digits);
+      throw new UnprocessableEntityException(
+        `Brazilian mobile phone number '${withSuffix}' does not exist on WhatsApp. Tried: ${candidates.join(', ')}`,
+      );
+    }
+    // Soft (default): warn and send the best-guess anyway, so a usync
+    // false-negative never blocks a valid send.
+    const bestGuess = ensureSuffix(normalizeBrazilMobileForSendDigits(digits));
+    this.cacheBrazilPhoneUnverified(digits, bestGuess);
+    this.logger.warn(
+      `Brazilian mobile number '${withSuffix}' not found on WhatsApp, sending best-guess '${bestGuess}'. Tried: ${candidates.join(', ')}`,
+    );
+    return bestGuess;
+  }
+
+  // Mentions are best-effort: a non-existent mention must never break the send.
+  protected async resolveOutboundMentions(
+    mentions?: string[],
+  ): Promise<string[] | undefined> {
+    if (!mentions?.length) {
+      return undefined;
+    }
+    const resolved: string[] = [];
+    for (const mention of mentions) {
+      const chatId = await this.resolveOutboundMention(mention);
+      resolved.push(toJID(chatId));
+    }
+    return resolved;
+  }
+
+  protected async resolveOutboundMentionsCus(
+    mentions?: string[],
+  ): Promise<string[] | undefined> {
+    if (!mentions?.length) {
+      return undefined;
+    }
+    const resolved: string[] = [];
+    for (const mention of mentions) {
+      resolved.push(await this.resolveOutboundMention(mention));
+    }
+    return resolved;
+  }
+
+  private async resolveOutboundMention(mention: string): Promise<string> {
+    try {
+      return await this.resolveOutboundChatId(mention);
+    } catch (error) {
+      this.logger.warn(
+        `Could not resolve mention '${mention}', using as-is: ${error}`,
+      );
+      return this.ensureSuffix(mention);
+    }
   }
 
   protected deserializeId(messageId: string): MessageId {

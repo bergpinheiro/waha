@@ -28,7 +28,6 @@ import {
   parseJsonList,
   statusToAck,
 } from '@waha/core/engines/gows/helpers';
-import { parseMessageCapping } from '@waha/core/abc/capping';
 import { parseGowsReachoutTimelock } from '@waha/core/engines/gows/reachouttimelock';
 import { GowsAuthFactoryCore } from '@waha/core/engines/gows/store/GowsAuthFactoryCore';
 import {
@@ -137,9 +136,7 @@ import {
 import { CallData } from '@waha/structures/calls.dto';
 import {
   MeInfo,
-  MessageCappingData,
   ProxyConfig,
-  ReachoutTimelockData,
   SessionConfig,
 } from '@waha/structures/sessions.dto';
 import {
@@ -225,8 +222,6 @@ function getGowsStorageConfig(
     groups: storeConfig?.groups !== false,
     chats: storeConfig?.chats !== false,
     labels: storeConfig?.labels !== false,
-    contacts: storeConfig?.contacts !== false,
-    message_secrets: storeConfig?.messageSecrets !== false,
   });
 }
 
@@ -243,7 +238,6 @@ enum WhatsMeowEvent {
   PUSH_NAME_SETTING = 'events.PushNameSetting',
   LOGGED_OUT = 'events.LoggedOut',
   NOTIFY_ACCOUNT_REACHOUT_TIMELOCK = 'events.NotifyAccountReachoutTimelock',
-  MESSAGE_CAPPING = 'gows.MessageCapping',
   // Groups
   GROUP_INFO = 'events.GroupInfo',
   JOINED_GROUP = 'events.JoinedGroup',
@@ -484,9 +478,6 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
     });
     events.on(WhatsMeowEvent.NOTIFY_ACCOUNT_REACHOUT_TIMELOCK, (data) => {
       this.reachoutTimelock.update(parseGowsReachoutTimelock(data));
-    });
-    events.on(WhatsMeowEvent.MESSAGE_CAPPING, (data) => {
-      this.messageCapping.update(parseMessageCapping(data));
     });
     events.on(WhatsMeowEvent.PRESENCE, (event: gows.Presence) => {
       if (isJidGroup(event.From)) {
@@ -845,7 +836,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
 
   @Activity()
   async fetchContactProfilePicture(id: string): Promise<string> {
-    const jid = normalizeJid(toJID(this.ensureSuffix(id)));
+    const jid = normalizeJid(toJID(await this.resolveOutboundChatId(id, { validate: false })));
     const request = new messages.ProfilePictureRequest({
       jid: jid,
       session: this.session,
@@ -936,11 +927,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
     if (!this.me) {
       return null;
     }
-    return {
-      ...this.me,
-      reachoutTimelock: this.reachoutTimelock.value,
-      messageCapping: this.messageCapping.value,
-    };
+    return { ...this.me, reachoutTimelock: this.reachoutTimelock.value };
   }
 
   /**
@@ -1060,7 +1047,8 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
 
   @Activity()
   async sendText(request: MessageTextRequest) {
-    const jid = normalizeJid(toJID(this.ensureSuffix(request.chatId)));
+    const jid = normalizeJid(toJID(await this.resolveOutboundChatId(request.chatId)));
+    const mentions = await this.resolveOutboundMentions(request.mentions);
     const message = new messages.MessageRequest({
       id: request.id,
       jid: jid,
@@ -1069,9 +1057,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
       linkPreview: request.linkPreview ?? true,
       linkPreviewHighQuality: request.linkPreviewHighQuality,
       replyTo: getMessageIdFromSerialized(request.reply_to),
-      mentions: request.mentions?.map((mention) =>
-        normalizeJid(toJID(mention)),
-      ),
+      mentions: mentions?.map((mention) => normalizeJid(mention)),
     });
     const response = await promisify(this.client.SendMessage)(message);
     const data = response.toObject();
@@ -1084,7 +1070,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
     messageId: string,
     request: EditMessageRequest,
   ) {
-    const jid = normalizeJid(toJID(this.ensureSuffix(chatId)));
+    const jid = normalizeJid(toJID(await this.resolveOutboundChatId(chatId, { validate: false })));
     const key = parseMessageIdSerialized(messageId, true);
     const message = new messages.EditMessageRequest({
       session: this.session,
@@ -1101,7 +1087,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
 
   @Activity()
   async sendContactVCard(request: MessageContactVcardRequest) {
-    const jid = normalizeJid(toJID(this.ensureSuffix(request.chatId)));
+    const jid = normalizeJid(toJID(await this.resolveOutboundChatId(request.chatId)));
     const contacts = request.contacts.map((el) => ({
       displayName:
         (el as any).fullName || parseVCardV3(el.vcard || '').fullName,
@@ -1121,7 +1107,9 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
 
   @Activity()
   async sendPoll(request: MessagePollRequest) {
-    const jid = normalizeJid(toJID(request.chatId));
+    const jid = normalizeJid(
+      toJID(await this.resolveOutboundChatId(request.chatId)),
+    );
     const message = new messages.MessageRequest({
       id: request.id,
       jid: jid,
@@ -1140,7 +1128,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
 
   @Activity()
   async sendPollVote(request: MessagePollVoteRequest) {
-    const jid = normalizeJid(toJID(this.ensureSuffix(request.chatId)));
+    const jid = normalizeJid(toJID(await this.resolveOutboundChatId(request.chatId, { validate: false })));
     const key = parseMessageIdSerialized(request.pollMessageId, true);
     const pollVote = new messages.PollVoteMessage({
       pollMessageId: key.id,
@@ -1162,7 +1150,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
 
   @Activity()
   async sendList(request: SendListRequest): Promise<any> {
-    const jid = normalizeJid(toJID(this.ensureSuffix(request.chatId)));
+    const jid = normalizeJid(toJID(await this.resolveOutboundChatId(request.chatId)));
     if (isJidGroup(jid) || isJidBroadcast(jid) || isJidNewsletter(jid)) {
       throw new UnprocessableEntityException(
         `List message can only be sent to a direct message chat.`,
@@ -1189,7 +1177,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
 
   @Activity()
   public async deleteMessage(chatId: string, messageId: string) {
-    const jid = normalizeJid(toJID(this.ensureSuffix(chatId)));
+    const jid = normalizeJid(toJID(await this.resolveOutboundChatId(chatId, { validate: false })));
     const key = parseMessageIdSerialized(messageId);
     const message = new messages.RevokeMessageRequest({
       session: this.session,
@@ -1281,9 +1269,10 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
     };
   }
 
+
   @Activity()
   async sendLocation(request: MessageLocationRequest) {
-    const jid = normalizeJid(toJID(this.ensureSuffix(request.chatId)));
+    const jid = normalizeJid(toJID(await this.resolveOutboundChatId(request.chatId)));
     const message = new messages.MessageRequest({
       id: request.id,
       jid: jid,
@@ -1305,7 +1294,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
   }
 
   private async sendMedia(type: messages.MediaType, request: any) {
-    const jid = normalizeJid(toJID(this.ensureSuffix(request.chatId)));
+    const jid = normalizeJid(toJID(await this.resolveOutboundChatId(request.chatId)));
     const media = await this.fileToMedia(request.file);
     media.type = type;
     if (type === messages.MediaType.IMAGE) {
@@ -1364,9 +1353,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
       session: this.session,
       media: media,
       backgroundColor: backgroundColor,
-      mentions: request.mentions?.map((mention) =>
-        normalizeJid(toJID(mention)),
-      ),
+      mentions: await this.resolveOutboundMentions(request.mentions),
       participants: participants,
     });
 
@@ -1442,7 +1429,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
   async sendLinkCustomPreview(
     request: MessageLinkCustomPreviewRequest,
   ): Promise<any> {
-    const jid = normalizeJid(toJID(this.ensureSuffix(request.chatId)));
+    const jid = normalizeJid(toJID(await this.resolveOutboundChatId(request.chatId)));
     const media = await this.fileToMedia(request.preview.image as RemoteFile);
     const preview = new messages.LinkPreview({
       url: request.preview.url,
@@ -1469,7 +1456,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
     throw new NotImplementedByEngineError();
 
     // Doesn't work yet
-    const jid = normalizeJid(toJID(this.ensureSuffix(request.chatId)));
+    const jid = normalizeJid(toJID(await this.resolveOutboundChatId(request.chatId)));
     const message = new messages.ButtonReplyRequest({
       jid: jid,
       session: this.session,
@@ -1828,7 +1815,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
 
   @Activity()
   async sendEvent(request: EventMessageRequest): Promise<WAMessage> {
-    const jid = normalizeJid(toJID(this.ensureSuffix(request.chatId)));
+    const jid = normalizeJid(toJID(await this.resolveOutboundChatId(request.chatId)));
     const event = request.event;
 
     // Create EventLocation if provided
@@ -1884,7 +1871,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
   public async setPresence(presence: WAHAPresenceStatus, chatId?: string) {
     let request: any;
     let method: any;
-    const jid = chatId ? normalizeJid(toJID(this.ensureSuffix(chatId))) : null;
+    const jid = chatId ? normalizeJid(toJID(await this.resolveOutboundChatId(chatId, { validate: false }))) : null;
     switch (presence) {
       case WAHAPresenceStatus.ONLINE:
         request = new messages.PresenceRequest({
@@ -2289,28 +2276,6 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
     return this.toWAContact(data);
   }
 
-  @Activity()
-  public async fetchMessageCapping(): Promise<MessageCappingData> {
-    const response = await promisify(this.client.FetchMessageCapping)(
-      this.session,
-    );
-    const capping = parseMessageCapping(parseJson(response));
-    // Keep the tracker in sync so MeInfo and 'session.status' reflect the fetch
-    this.messageCapping.update(capping);
-    return capping;
-  }
-
-  @Activity()
-  public async fetchReachoutTimelock(): Promise<ReachoutTimelockData> {
-    const response = await promisify(this.client.FetchReachoutTimelock)(
-      this.session,
-    );
-    const timelock = parseGowsReachoutTimelock(parseJson(response));
-    // Keep the tracker in sync so MeInfo and 'session.status' reflect the fetch
-    this.reachoutTimelock.update(timelock);
-    return timelock;
-  }
-
   public async getContacts(pagination: PaginationParams) {
     const request = new messages.GetContactsRequest({
       session: this.session,
@@ -2385,6 +2350,33 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
       lid: lid || null,
       pn: toCusFormat(pn),
     };
+  }
+
+  // gows-specific Tier 2 for Brazilian 9th-digit resolution.
+  //
+  // Resolve a candidate against the local PN<->LID map (whatsmeow's
+  // `whatsmeow_lid_map`), which is populated from contact sync and received
+  // messages and persisted in the gows store. A PN that has a LID mapping is a
+  // number this session already knows in its canonical form, so we can pick the
+  // correct 9th-digit variant with ZERO network calls (no IsOnWhatsApp/usync).
+  // Only genuinely cold numbers (never seen) fall through to the Tier 3 lookup.
+  protected async lookupKnownChatId(
+    candidates: string[],
+  ): Promise<string | null> {
+    for (const candidate of candidates) {
+      try {
+        const { lid, pn } = await this.findLIDByPhoneNumber(candidate);
+        // A non-empty LID user part means this exact PN is known locally.
+        if (lid && lid.split('@')[0]) {
+          return pn;
+        }
+      } catch (error) {
+        this.logger.debug(
+          `LID map lookup failed for candidate '${candidate}': ${error}`,
+        );
+      }
+    }
+    return null;
   }
 
   /**
@@ -2490,7 +2482,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
       jid = null;
     } else {
       jid = new messages.OptionalString({
-        value: normalizeJid(toJID(this.ensureSuffix(chatId))),
+        value: normalizeJid(toJID(await this.resolveOutboundChatId(chatId, { validate: false }))),
       });
     }
 
@@ -2651,7 +2643,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
 
   @Activity()
   public async chatsUnreadChat(chatId: string): Promise<any> {
-    const jid = normalizeJid(toJID(this.ensureSuffix(chatId)));
+    const jid = normalizeJid(toJID(await this.resolveOutboundChatId(chatId, { validate: false })));
     const request = new messages.ChatUnreadRequest({
       session: this.session,
       jid: jid,
