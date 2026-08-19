@@ -71,7 +71,7 @@
     "agentkeepalive": "^4.5.0",
     "async-lock": "^1.4.1",
     "audio-decode": "^2.2.2",
-    "axios": "^1.9.0",
+    "axios": "^1.19.0",
     "axios-retry": "^4.5.0",
     "better-sqlite3": "^12.4.1",
     "bullmq": "^5.48.1",
@@ -138,7 +138,7 @@
     "ws": "^8.18.0",
     "puppeteer": "^24.31.0",
     "whatwg-url": "13.0.0",
-    "axios": "^1.9.0",
+    "axios": "^1.19.0",
     "whatsapp-rust-bridge": "npm:@devlikeapro/whatsapp-rust-bridge@0.5.2"
   },
   "devDependencies": {
