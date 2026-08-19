@@ -83,7 +83,6 @@ export const IMPORTS_CORE = [
   LoggerModule.forRoot({
     renameContext: 'name',
     pinoHttp: {
-      quietReqLogger: true,
       level: getPinoLogLevel(),
       useLevel: getPinoHttpUseLevel(),
       transport: getPinoTransport(),
@@ -102,9 +101,9 @@ export const IMPORTS_CORE = [
         paths: ['req.query["x-api-key"]'],
         censor: '[REDACTED]',
       },
+      customAttributeKeys: { req: 'req', res: 'res' },
       serializers: {
         req: (req) => ({
-          id: req.id,
           method: req.method,
           url: redactUrlParams('x-api-key', req.url, req.query),
           query: req.query,

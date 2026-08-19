@@ -1,3 +1,4 @@
+import { injectTraceContext } from './tracing'; // MUST be line 1, before @nestjs/* and before pino
 import { NestFactory } from '@nestjs/core';
 import { WsAdapter } from '@nestjs/platform-ws';
 import { WAHA_WEBHOOKS } from '@waha/structures/webhooks';
@@ -84,7 +85,8 @@ async function bootstrap() {
   app.useGlobalInterceptors(new LoggerErrorInterceptor());
 
   app.useGlobalFilters(new AllExceptionsFilter());
-  app.enableCors();
+  app.enableCors({ exposedHeaders: ['traceparent', 'tracestate'] });
+  app.use(injectTraceContext);
   // Ideally, we should apply it globally.
   // but for now we added it ValidationPipe on Controller or endpoint level
   // app.useGlobalPipes(new ValidationPipe({ transform: true }));
