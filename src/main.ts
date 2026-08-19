@@ -19,9 +19,10 @@ import { SwaggerConfiguratorCore } from './core/SwaggerConfiguratorCore';
 import { AllExceptionsFilter } from './nestjs/AllExceptionsFilter';
 import { getWAHAVersion, VERSION, WAHAVersion } from './version';
 import { loadESMModules } from '@waha/vendor/esm';
-import { setGlobalDispatcher, Agent } from 'undici';
+import { setGlobalDispatcher, EnvHttpProxyAgent } from 'undici';
 
-setGlobalDispatcher(new Agent({ connect: { family: 4 } }));
+// honor HTTP(S)_PROXY / NO_PROXY for global fetch (media downloads); direct connection otherwise
+setGlobalDispatcher(new EnvHttpProxyAgent({ connect: { family: 4 } }));
 
 const logger: Logger = pino({
   level: getPinoLogLevel(),
