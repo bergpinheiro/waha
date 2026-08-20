@@ -106,10 +106,13 @@ import { EventMessageRequest } from '../../structures/events.dto';
 import {
   CreateGroupRequest,
   GroupField,
+  GroupJoinRequest,
+  GroupJoinRequestResult,
   GroupParticipant,
   GroupsListFields,
   ParticipantsRequest,
   SettingsMemberAddMode,
+  SettingsMembershipApproval,
   SettingsSecurityChangeInfo,
 } from '../../structures/groups.dto';
 import { WAHAChatPresences } from '../../structures/presence.dto';
@@ -1066,6 +1069,37 @@ export abstract class WhatsappSession {
   }
 
   public setMemberAddMode(id, value) {
+    throw new NotImplementedByEngineError();
+  }
+
+  public getMembershipApprovalMode(
+    id: string,
+  ): Promise<SettingsMembershipApproval> {
+    throw new NotImplementedByEngineError();
+  }
+
+  public setMembershipApprovalMode(
+    id: string,
+    value: boolean,
+  ): Promise<boolean> {
+    throw new NotImplementedByEngineError();
+  }
+
+  public getGroupJoinRequests(id: string): Promise<GroupJoinRequest[]> {
+    throw new NotImplementedByEngineError();
+  }
+
+  public approveGroupJoinRequests(
+    id: string,
+    request: ParticipantsRequest,
+  ): Promise<GroupJoinRequestResult[]> {
+    throw new NotImplementedByEngineError();
+  }
+
+  public rejectGroupJoinRequests(
+    id: string,
+    request: ParticipantsRequest,
+  ): Promise<GroupJoinRequestResult[]> {
     throw new NotImplementedByEngineError();
   }
 

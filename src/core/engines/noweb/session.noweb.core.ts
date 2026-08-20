@@ -51,9 +51,12 @@ import {
   WhatsappSession,
 } from '@waha/core/abc/session.abc';
 import {
+  ToGroupJoinRequest,
+  ToGroupJoinRequestResult,
   ToGroupParticipant,
   ToGroupV2JoinEvent,
   ToGroupV2LeaveEvent,
+  ToGroupV2ParticipantsJoinRequestEvent,
   ToGroupV2Participants,
   ToGroupV2UpdateEvent,
 } from '@waha/core/engines/noweb/groups.noweb';
@@ -154,9 +157,12 @@ import {
 import { BinaryFile, FileType, RemoteFile } from '@waha/structures/files.dto';
 import {
   CreateGroupRequest,
+  GroupJoinRequest,
+  GroupJoinRequestResult,
   GroupParticipant,
   ParticipantsRequest,
   SettingsMemberAddMode,
+  SettingsMembershipApproval,
   SettingsSecurityChangeInfo,
 } from '@waha/structures/groups.dto';
 import {
@@ -2086,6 +2092,59 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
     return await this.sock.groupMemberAddMode(id, mode);
   }
 
+  public async getMembershipApprovalMode(
+    id: string,
+  ): Promise<SettingsMembershipApproval> {
+    const group = await this.getGroup(id);
+    return { newMembersApprovalRequired: !!group.joinApprovalMode };
+  }
+
+  @Activity()
+  public async setMembershipApprovalMode(
+    id: string,
+    value: boolean,
+  ): Promise<boolean> {
+    const mode = value ? 'on' : 'off';
+    await this.sock.groupJoinApprovalMode(id, mode);
+    return true;
+  }
+
+  @Activity()
+  public async getGroupJoinRequests(id: string): Promise<GroupJoinRequest[]> {
+    const requests = await this.sock.groupRequestParticipantsList(id);
+    return requests.map(ToGroupJoinRequest);
+  }
+
+  @Activity()
+  public async approveGroupJoinRequests(
+    id: string,
+    request: ParticipantsRequest,
+  ): Promise<GroupJoinRequestResult[]> {
+    return await this.updateGroupJoinRequests(id, request, 'approve');
+  }
+
+  @Activity()
+  public async rejectGroupJoinRequests(
+    id: string,
+    request: ParticipantsRequest,
+  ): Promise<GroupJoinRequestResult[]> {
+    return await this.updateGroupJoinRequests(id, request, 'reject');
+  }
+
+  private async updateGroupJoinRequests(
+    id: string,
+    request: ParticipantsRequest,
+    action: 'approve' | 'reject',
+  ): Promise<GroupJoinRequestResult[]> {
+    const participants = request.participants.map(getId);
+    const results = await this.sock.groupRequestParticipantsUpdate(
+      id,
+      participants,
+      action,
+    );
+    return results.map(ToGroupJoinRequestResult);
+  }
+
   @Activity()
   public async leaveGroup(id) {
     return this.sock.groupLeave(id);
@@ -2780,6 +2839,17 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
       filter(Boolean),
     );
     this.events2.get(WAHAEvents.GROUP_V2_LEAVE).switch(groupV2Leave$);
+
+    const groupV2ParticipantsJoinRequest$: Observable<any> = fromEvent(
+      this.sock.ev,
+      'group.join-request',
+    ).pipe(
+      map((event: any) => ToGroupV2ParticipantsJoinRequestEvent(event)),
+      filter(Boolean),
+    );
+    this.events2
+      .get(WAHAEvents.GROUP_V2_PARTICIPANTS_JOIN_REQUEST)
+      .switch(groupV2ParticipantsJoinRequest$);
 
     this.events2.get(WAHAEvents.PRESENCE_UPDATE).switch(
       fromEvent(this.sock.ev, 'presence.update').pipe(

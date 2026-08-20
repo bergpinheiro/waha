@@ -70,6 +70,7 @@ import { CallData } from '@waha/structures/calls.dto';
 import {
   GroupV2JoinEvent,
   GroupV2LeaveEvent,
+  GroupV2ParticipantsJoinRequestEvent,
   GroupV2ParticipantsEvent,
   GroupV2UpdateEvent,
 } from '@waha/structures/groups.events.dto';
@@ -110,6 +111,7 @@ import {
 } from '@wppconnect-team/wppconnect';
 import type { Logger as WinstonLogger } from 'winston';
 import {
+  WppGp2ToGroupV2ParticipantsJoinRequest,
   WppGp2ToGroupV2Update,
   WppParticipantsIsMyJoin,
   WppParticipantsIsMyLeave,
@@ -138,6 +140,7 @@ import { getSessionNamespace } from '@waha/config';
 import { killProcessesByPatterns } from '@waha/core/utils/processes';
 import { DistinctAck } from '@waha/core/utils/reactive';
 import { isJidGroup, toCusFormat } from '@waha/core/utils/jids';
+import { GetSerialized } from '@waha/core/utils/serialized';
 import { WAMedia } from '@waha/structures/media.dto';
 import * as lodash from 'lodash';
 import {
@@ -161,11 +164,15 @@ import { BinaryFile, RemoteFile } from '@waha/structures/files.dto';
 import {
   CreateGroupRequest,
   GroupInfo,
+  GroupJoinRequest,
+  GroupJoinRequestResult,
   GroupParticipant,
   GroupParticipantRole,
   GroupSortField,
+  NormalizeJoinRequestMethod,
   ParticipantsRequest,
   SettingsMemberAddMode,
+  SettingsMembershipApproval,
   SettingsSecurityChangeInfo,
 } from '@waha/structures/groups.dto';
 import { ContactQuery, ContactRequest } from '@waha/structures/contacts.dto';
@@ -1433,6 +1440,67 @@ export class WhatsappSessionWPPCore extends WhatsappSession {
     );
   }
 
+  public async getMembershipApprovalMode(
+    id: string,
+  ): Promise<SettingsMembershipApproval> {
+    const group = await this.wpp!.getChatById(this.ensureSuffix(id));
+    return {
+      newMembersApprovalRequired:
+        !!group?.groupMetadata?.membershipApprovalMode,
+    };
+  }
+
+  @Activity()
+  public setMembershipApprovalMode(
+    id: string,
+    value: boolean,
+  ): Promise<boolean> {
+    // Not in the GroupProperty enum, but wa-js passes the property through
+    return this.wpp!.setGroupProperty(
+      this.ensureSuffix(id),
+      'membership_approval_mode' as GroupProperty,
+      value,
+    );
+  }
+
+  @Activity()
+  public async getGroupJoinRequests(id: string): Promise<GroupJoinRequest[]> {
+    const requests = await this.wpp!.getGroupMembershipRequests(
+      this.ensureSuffix(id),
+    );
+    return requests.map((request) => ({
+      requesterId: GetSerialized(request.id),
+      addedById: GetSerialized(request.addedBy),
+      parentGroupId: GetSerialized(request.parentGroupId),
+      requestMethod: NormalizeJoinRequestMethod(request.requestMethod),
+      timestamp: request.t,
+    }));
+  }
+
+  @Activity()
+  public async approveGroupJoinRequests(
+    id: string,
+    request: ParticipantsRequest,
+  ): Promise<GroupJoinRequestResult[]> {
+    const results = await this.wpp!.approveGroupMembershipRequest(
+      this.ensureSuffix(id),
+      request.participants.map((participant) => participant.id),
+    );
+    return results.map(WppToGroupJoinRequestResult);
+  }
+
+  @Activity()
+  public async rejectGroupJoinRequests(
+    id: string,
+    request: ParticipantsRequest,
+  ): Promise<GroupJoinRequestResult[]> {
+    const results = await this.wpp!.rejectGroupMembershipRequest(
+      this.ensureSuffix(id),
+      request.participants.map((participant) => participant.id),
+    );
+    return results.map(WppToGroupJoinRequestResult);
+  }
+
   @Activity()
   public deleteGroup(id: string): Promise<boolean> {
     return this.wpp!.deleteChat(this.ensureSuffix(id));
@@ -1926,6 +1994,20 @@ export class WhatsappSessionWPPCore extends WhatsappSession {
       filter(Boolean),
     );
     this.events2.get(WAHAEvents.GROUP_V2_UPDATE).switch(groupV2Update$);
+
+    const groupV2ParticipantsJoinRequest$ = streams.onAnyMessage.pipe(
+      map((p) => p.data),
+      filter((msg) => msg?.type === MessageType.GP2),
+      distinct((msg) => msg?.id, interval(60_000)),
+      map(
+        (msg): GroupV2ParticipantsJoinRequestEvent =>
+          WppGp2ToGroupV2ParticipantsJoinRequest(msg),
+      ),
+      filter(Boolean),
+    );
+    this.events2
+      .get(WAHAEvents.GROUP_V2_PARTICIPANTS_JOIN_REQUEST)
+      .switch(groupV2ParticipantsJoinRequest$);
 
     //
     // Calls
@@ -2736,6 +2818,17 @@ export class WhatsappSessionWPPCore extends WhatsappSession {
       },
     };
   }
+}
+
+function WppToGroupJoinRequestResult(result: {
+  error: any;
+  wid: any;
+}): GroupJoinRequestResult {
+  return {
+    requesterId: GetSerialized(result.wid),
+    success: !result.error,
+    error: Number(result.error) || undefined,
+  };
 }
 
 function extractWppMessageId(response: unknown): string | null {

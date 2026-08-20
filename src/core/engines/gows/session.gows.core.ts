@@ -15,12 +15,19 @@ import { Jid } from '@waha/core/engines/const';
 import { EventsFromObservable } from '@waha/core/engines/gows/EventsFromObservable';
 import { GowsEventStreamObservable } from '@waha/core/engines/gows/GowsEventStreamObservable';
 import {
+  ToGroupJoinRequest,
+  ToGroupJoinRequestResult,
   ToGroupParticipants,
   ToGroupV2JoinEvent,
   ToGroupV2LeaveEvent,
+  ToGroupV2ParticipantsJoinRequestEvents,
   ToGroupV2ParticipantsEvents,
   ToGroupV2UpdateEvent,
 } from '@waha/core/engines/gows/groups.gows';
+import {
+  GOWSGroupParticipant,
+  GOWSGroupParticipantRequest,
+} from '@waha/core/engines/gows/types.group';
 import { messages } from '@waha/core/engines/gows/grpc/gows';
 import {
   optional,
@@ -116,11 +123,14 @@ import {
 import { BinaryFile, RemoteFile } from '@waha/structures/files.dto';
 import {
   CreateGroupRequest,
+  GroupJoinRequest,
+  GroupJoinRequestResult,
   GroupParticipant,
   GroupSortField,
   Participant,
   ParticipantsRequest,
   SettingsMemberAddMode,
+  SettingsMembershipApproval,
   SettingsSecurityChangeInfo,
 } from '@waha/structures/groups.dto';
 import { ReplyToMessage } from '@waha/structures/message.dto';
@@ -247,6 +257,7 @@ enum WhatsMeowEvent {
   // Groups
   GROUP_INFO = 'events.GroupInfo',
   JOINED_GROUP = 'events.JoinedGroup',
+  GROUP_JOIN_REQUEST = 'gows.GroupJoinRequestEvent',
   // Labels
   LABEL_EDIT = 'events.LabelEdit',
   LABEL_ASSOCIATION_CHAT = 'events.LabelAssociationChat',
@@ -752,6 +763,15 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
       filter(Boolean),
     );
     this.events2.get(WAHAEvents.GROUP_V2_UPDATE).switch(groupV2Update$);
+
+    const groupV2ParticipantsJoinRequest$ = all$.pipe(
+      onlyEvent(WhatsMeowEvent.GROUP_JOIN_REQUEST),
+      map(ToGroupV2ParticipantsJoinRequestEvents),
+      mergeMap((events) => events),
+    );
+    this.events2
+      .get(WAHAEvents.GROUP_V2_PARTICIPANTS_JOIN_REQUEST)
+      .switch(groupV2ParticipantsJoinRequest$);
 
     // Label Events
     // First, create streams for the raw label events
@@ -1681,6 +1701,79 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
     });
     await promisify(this.client.SetGroupMemberAddMode)(req);
     return;
+  }
+
+  public async getMembershipApprovalMode(
+    id: string,
+  ): Promise<SettingsMembershipApproval> {
+    const group = await this.getGroup(id);
+    return {
+      newMembersApprovalRequired: !!group.IsJoinApprovalRequired,
+    };
+  }
+
+  @Activity()
+  public async setMembershipApprovalMode(
+    id: string,
+    value: boolean,
+  ): Promise<boolean> {
+    const req = new messages.JidBoolRequest({
+      session: this.session,
+      jid: id,
+      value: value,
+    });
+    await promisify(this.client.SetGroupJoinApprovalMode)(req);
+    return true;
+  }
+
+  @Activity()
+  public async getGroupJoinRequests(id: string): Promise<GroupJoinRequest[]> {
+    const req = new messages.JidRequest({
+      session: this.session,
+      jid: id,
+    });
+    const response = await promisify(this.client.GetGroupRequestParticipants)(
+      req,
+    );
+    const requests: GOWSGroupParticipantRequest[] = parseJsonList(response);
+    return requests.map(ToGroupJoinRequest);
+  }
+
+  @Activity()
+  public approveGroupJoinRequests(
+    id: string,
+    request: ParticipantsRequest,
+  ): Promise<GroupJoinRequestResult[]> {
+    const action = messages.ParticipantRequestAction.APPROVE;
+    return this.updateRequestParticipants(id, request.participants, action);
+  }
+
+  @Activity()
+  public rejectGroupJoinRequests(
+    id: string,
+    request: ParticipantsRequest,
+  ): Promise<GroupJoinRequestResult[]> {
+    const action = messages.ParticipantRequestAction.REJECT;
+    return this.updateRequestParticipants(id, request.participants, action);
+  }
+
+  private async updateRequestParticipants(
+    id: string,
+    participants: Array<Participant>,
+    action: messages.ParticipantRequestAction,
+  ): Promise<GroupJoinRequestResult[]> {
+    const jids = participants.map((p) => normalizeJid(toJID(p.id)));
+    const req = new messages.UpdateRequestParticipantsRequest({
+      session: this.session,
+      jid: id,
+      participants: jids,
+      action: action,
+    });
+    const response = await promisify(
+      this.client.UpdateGroupRequestParticipants,
+    )(req);
+    const results: GOWSGroupParticipant[] = parseJsonList(response);
+    return results.map(ToGroupJoinRequestResult);
   }
 
   public deleteGroup(id) {
