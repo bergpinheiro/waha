@@ -222,6 +222,7 @@ import axiosRetry from 'axios-retry';
 import * as path from 'path';
 import MessageServiceClient = messages.MessageServiceClient;
 import * as fsp from 'fs/promises';
+import { MediaDownloadOptions } from '@waha/core/media/IMediaManager';
 
 axiosRetry(axios, { retries: 3 });
 
@@ -586,7 +587,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
         msg.Status = MessageStatus.ServerAck;
         return msg;
       }),
-      mergeMap((msg) => this.processIncomingMessage(msg, true)),
+      mergeMap((msg) => this.processIncomingMessage(msg, this.media.events)),
       filter(Boolean),
       // Deduplicate messages by ID to prevent duplicate webhooks
       // @see https://github.com/devlikeapro/waha/issues/1564
@@ -598,7 +599,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
         msg.Status = MessageStatus.DeliveryAck;
         return msg;
       }),
-      mergeMap((msg) => this.processIncomingMessage(msg, true)),
+      mergeMap((msg) => this.processIncomingMessage(msg, this.media.events)),
       filter(Boolean),
       // Deduplicate messages by ID to prevent duplicate webhooks
       // @see https://github.com/devlikeapro/waha/issues/1564
@@ -2173,7 +2174,6 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
     inviteCode: string,
     query: PreviewChannelMessages,
   ): Promise<ChannelMessage[]> {
-    const downloadMedia = query.downloadMedia;
     const request = new messages.GetNewsletterMessagesByInviteRequest({
       session: this.session,
       invite: inviteCode,
@@ -2187,12 +2187,17 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
     if (!resp.Messages) {
       return [];
     }
+    const params = {
+      download: query.downloadMedia,
+      mimetypes: query.downloadMediaMimetypes,
+    };
+    const options = lodash.defaults({}, params, this.media.api);
     for (const msg of resp.Messages) {
       promises.push(
         this.GowsChannelMessageToChannelMessage(
           resp.NewsletterJID,
           msg,
-          downloadMedia,
+          options,
         ),
       );
     }
@@ -2204,7 +2209,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
   private async GowsChannelMessageToChannelMessage(
     jid: string,
     channelMessage: any,
-    downloadMedia: boolean,
+    options: MediaDownloadOptions,
   ): Promise<ChannelMessage> {
     const msg = {
       Info: {
@@ -2217,7 +2222,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
       },
       Message: channelMessage.Message,
     };
-    const message = await this.processIncomingMessage(msg, downloadMedia);
+    const message = await this.processIncomingMessage(msg, options);
     const reactions: any =
       sortObjectByValues(channelMessage.ReactionCounts) || {};
     return {
@@ -2576,7 +2581,6 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
     query: GetChatMessagesQuery,
     filter: GetChatMessagesFilter,
   ) {
-    const downloadMedia = query.downloadMedia;
     const merge = query.merge ?? true;
     let jid: messages.OptionalString;
     if (chatId === 'all') {
@@ -2620,8 +2624,13 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
     const response = await promisify(this.client.GetMessages)(request);
     const msgs = parseJsonList(response);
     const promises = [];
+    const params = {
+      download: query.downloadMedia,
+      mimetypes: query.downloadMediaMimetypes,
+    };
+    const options = lodash.defaults({}, params, this.media.api);
     for (const msg of msgs) {
-      promises.push(this.processIncomingMessage(msg, downloadMedia));
+      promises.push(this.processIncomingMessage(msg, options));
     }
     let result = await Promise.all(promises);
     result = result.filter(Boolean);
@@ -2648,7 +2657,12 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
     });
     const response = await promisify(this.client.GetMessageById)(request);
     const msg = parseJson(response);
-    return this.processIncomingMessage(msg, query.downloadMedia);
+    const params = {
+      download: query.downloadMedia,
+      mimetypes: query.downloadMediaMimetypes,
+    };
+    const options = lodash.defaults({}, params, this.media.api);
+    return this.processIncomingMessage(msg, options);
   }
 
   /**
@@ -2812,19 +2826,19 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
     return true;
   }
 
-  protected async processIncomingMessage(message, downloadMedia = true) {
+  protected async processIncomingMessage(
+    message,
+    options: MediaDownloadOptions,
+  ) {
     // Filter
     if (!this.shouldProcessIncomingMessage(message)) {
       return null;
     }
     // Convert
     const wamessage = this.toWAMessage(message);
-    // Media
-    if (downloadMedia) {
-      const media = await this.downloadMediaSafe(message);
-      wamessage.media = media;
-    }
-    if (downloadMedia && wamessage.replyTo?.hasMedia) {
+    const media = await this.downloadMediaSafe(message, options);
+    wamessage.media = media;
+    if (wamessage.replyTo?.hasMedia) {
       const msg = {
         Message: wamessage.replyTo._data,
         Info: {
@@ -2832,32 +2846,28 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
           ID: wamessage.replyTo.id || '',
         },
       };
-      wamessage.replyTo.media = await this.downloadMediaSafe(msg);
+      wamessage.replyTo.media = await this.downloadMediaSafe(msg, options);
     }
     return wamessage;
   }
 
-  protected async downloadMediaSafe(message) {
+  protected async downloadMediaSafe(message, options: MediaDownloadOptions) {
     try {
-      return await this.downloadMedia(message);
+      let processor: IMediaEngineProcessor<any> = new GOWSEngineMediaProcessor(
+        this,
+      );
+      processor = new LottieMediaProcessorWrapper(processor, this.logger);
+      const media = await this.mediaManager.processMedia(
+        processor,
+        message,
+        options,
+      );
+      return media;
     } catch (e) {
       this.logger.error('Failed when tried to download media for a message');
       this.logger.error(e, e.stack);
       return null;
     }
-  }
-
-  protected async downloadMedia(message) {
-    let processor: IMediaEngineProcessor<any> = new GOWSEngineMediaProcessor(
-      this,
-    );
-    processor = new LottieMediaProcessorWrapper(processor, this.logger);
-    const media = await this.mediaManager.processMedia(
-      processor,
-      message,
-      this.name,
-    );
-    return media;
   }
 
   protected toWAMessage(message): WAMessage {

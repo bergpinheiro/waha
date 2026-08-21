@@ -72,6 +72,7 @@ import { toVcardV3 } from '@waha/core/vcard';
 import { createAgentProxy } from '@waha/core/helpers.proxy';
 import type { Agent } from 'https';
 import { IMediaEngineProcessor } from '@waha/core/media/IMediaEngineProcessor';
+import { MediaDownloadOptions } from '@waha/core/media/IMediaManager';
 import { LottieMediaProcessorWrapper } from '@waha/core/media/LottieMediaProcessorWrapper';
 import { QR } from '@waha/core/QR';
 import { AckToStatus, StatusToAck } from '@waha/core/utils/acks';
@@ -1549,7 +1550,6 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
     query: GetChatMessagesQuery,
     filter: GetChatMessagesFilter,
   ) {
-    const downloadMedia = query.downloadMedia;
     const pagination = query as PaginationParams;
     const merge = query.merge ?? true;
     const messages = await this.store.getMessagesByJid(
@@ -1560,8 +1560,13 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
     );
 
     const promises = [];
+    const params = {
+      download: query.downloadMedia,
+      mimetypes: query.downloadMediaMimetypes,
+    };
+    const options = lodash.defaults({}, params, this.media.api);
     for (const msg of messages) {
-      promises.push(this.processIncomingMessage(msg, downloadMedia));
+      promises.push(this.processIncomingMessage(msg, options));
     }
     let result = await Promise.all(promises);
     result = result.filter(Boolean);
@@ -1589,7 +1594,12 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
       merge,
     );
     if (!message) return null;
-    return await this.processIncomingMessage(message, query.downloadMedia);
+    const params = {
+      download: query.downloadMedia,
+      mimetypes: query.downloadMediaMimetypes,
+    };
+    const options = lodash.defaults({}, params, this.media.api);
+    return await this.processIncomingMessage(message, options);
   }
 
   @Activity()
@@ -2510,7 +2520,6 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
     inviteCode: string,
     query: PreviewChannelMessages,
   ): Promise<ChannelMessage[]> {
-    const downloadMedia = query.downloadMedia;
     const updates = await this.sock.newsletterFetchPreviewMessages(
       'invite',
       inviteCode,
@@ -2518,9 +2527,14 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
       null,
     );
     const promises = [];
+    const params = {
+      download: query.downloadMedia,
+      mimetypes: query.downloadMediaMimetypes,
+    };
+    const options = lodash.defaults({}, params, this.media.api);
     for (const update of updates) {
       promises.push(
-        this.NewsletterFetchedUpdateToChannelMessage(update, downloadMedia),
+        this.NewsletterFetchedUpdateToChannelMessage(update, options),
       );
     }
     let result = await Promise.all(promises);
@@ -2530,16 +2544,13 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
 
   private async NewsletterFetchedUpdateToChannelMessage(
     update: NewsletterFetchedUpdate,
-    downloadMedia: boolean,
+    options: MediaDownloadOptions,
   ): Promise<ChannelMessage> {
     let reactions: any = Object.fromEntries(
       update.reactions.map(({ code, count }) => [code, count]),
     );
     reactions = sortObjectByValues(reactions) || {};
-    const message = await this.processIncomingMessage(
-      update.message,
-      downloadMedia,
-    );
+    const message = await this.processIncomingMessage(update.message, options);
     return {
       message: message,
       reactions: reactions,
@@ -2674,13 +2685,13 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
       isMine,
     );
     messagesFromMe$ = messagesFromMe$.pipe(
-      mergeMap((msg) => this.processIncomingMessage(msg, true)),
+      mergeMap((msg) => this.processIncomingMessage(msg, this.media.events)),
       filter(Boolean),
       DistinctMessages(),
       share(), // share it so we don't process twice in message.any
     );
     messagesFromOthers$ = messagesFromOthers$.pipe(
-      mergeMap((msg) => this.processIncomingMessage(msg, true)),
+      mergeMap((msg) => this.processIncomingMessage(msg, this.media.events)),
       filter(Boolean),
       DistinctMessages(),
       share(), // share it so we don't process twice in message.any
@@ -3230,7 +3241,7 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
 
   protected async processIncomingMessage(
     message,
-    downloadMedia: boolean,
+    options: MediaDownloadOptions,
   ): Promise<WAMessage | null> {
     // Filter
     if (!this.shouldProcessIncomingMessage(message)) {
@@ -3242,11 +3253,9 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
       return null;
     }
     // Media
-    if (downloadMedia && wamessage.hasMedia) {
-      wamessage.media = await this.downloadMediaSafe(message);
-    }
+    wamessage.media = await this.downloadMediaSafe(message, options);
 
-    if (downloadMedia && wamessage.replyTo?.hasMedia) {
+    if (wamessage.replyTo?.hasMedia) {
       const mediaContent = extractMediaContent(wamessage.replyTo._data);
       const m = {
         message: wamessage.replyTo._data,
@@ -3259,7 +3268,7 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
           remoteJid: message.key.remoteJid,
         },
       };
-      wamessage.replyTo.media = await this.downloadMediaSafe(m);
+      wamessage.replyTo.media = await this.downloadMediaSafe(m, options);
     }
     return wamessage;
   }
@@ -3514,23 +3523,22 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
     return { id: chatId, presences: presences };
   }
 
-  protected async downloadMediaSafe(message): Promise<WAMedia | null> {
+  protected async downloadMediaSafe(
+    message,
+    options: MediaDownloadOptions,
+  ): Promise<WAMedia | null> {
     try {
-      return await this.downloadMedia(message);
+      let processor: IMediaEngineProcessor<any> = new NOWEBEngineMediaProcessor(
+        this,
+        this.loggerBuilder,
+      );
+      processor = new LottieMediaProcessorWrapper(processor, this.logger);
+      return await this.mediaManager.processMedia(processor, message, options);
     } catch (e) {
       this.logger.error('Failed when tried to download media for a message');
       this.logger.error(e, e.stack);
     }
     return null;
-  }
-
-  protected async downloadMedia(message): Promise<WAMedia | null> {
-    let processor: IMediaEngineProcessor<any> = new NOWEBEngineMediaProcessor(
-      this,
-      this.loggerBuilder,
-    );
-    processor = new LottieMediaProcessorWrapper(processor, this.logger);
-    return this.mediaManager.processMedia(processor, message, this.name);
   }
 
   protected async getMessageOptions(request: {

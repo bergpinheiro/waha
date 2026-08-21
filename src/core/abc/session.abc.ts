@@ -139,7 +139,7 @@ import {
   AvailableInPlusVersion,
   NotImplementedByEngineError,
 } from '../exceptions';
-import { IMediaManager } from '../media/IMediaManager';
+import { IMediaManager, MediaDownloadOptions } from '../media/IMediaManager';
 import { QR } from '../QR';
 import { DataStore } from './DataStore';
 import { fetchBuffer } from '@waha/utils/fetch';
@@ -147,7 +147,6 @@ import {
   PRESENCE_AUTO_ONLINE,
   PRESENCE_AUTO_ONLINE_DURATION_SECONDS,
 } from '@waha/core/env';
-import { Activity } from '@waha/core/abc/activity';
 
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const qrcode = require('qrcode-terminal');
@@ -162,6 +161,11 @@ export function ensureSuffix(phone) {
   return phone + suffix;
 }
 
+interface MediaConfig {
+  api: MediaDownloadOptions;
+  events: MediaDownloadOptions;
+}
+
 export interface SessionParams {
   name: string;
   printQR: boolean;
@@ -174,6 +178,8 @@ export interface SessionParams {
   engineConfig?: any;
   // Ignore settings
   ignore: IgnoreJidConfig;
+  // Media config
+  media: MediaConfig;
 }
 
 /**
@@ -199,6 +205,7 @@ export abstract class WhatsappSession {
   protected sessionStore: DataStore;
   protected proxyConfig?: ProxyConfig;
   public sessionConfig?: SessionConfig;
+  protected media: MediaConfig;
   protected engineConfig?: any;
   protected unpairing: boolean = false;
   protected jids: JidFilter;
@@ -244,6 +251,7 @@ export abstract class WhatsappSession {
     sessionConfig,
     engineConfig,
     ignore,
+    media,
   }: SessionParams) {
     this._status = WAHASessionStatus.STOPPED;
     this.status$ = new Subject<SessionStatusUpdate>();
@@ -362,6 +370,17 @@ export abstract class WhatsappSession {
       'The session ignores the following chat ids',
     );
     this.jids = new JidFilter(ignore);
+
+    //
+    // Media options
+    //
+    this.media = media;
+    const mimetypes = this.media.events.mimetypes;
+    if (mimetypes && mimetypes.length > 0) {
+      const str = mimetypes.join(',');
+      const msg = `Only '${str}' mimetypes will be downloaded for the session`;
+      this.logger.info(msg);
+    }
   }
 
   public getEventObservable(event: WAHAEvents) {

@@ -40,6 +40,7 @@ import { WAMimeType } from '@waha/core/media/WAMimeType';
 import { detectMimetype } from '@waha/utils/files';
 import { NotImplementedByEngineError } from '@waha/core/exceptions';
 import { IMediaEngineProcessor } from '@waha/core/media/IMediaEngineProcessor';
+import { MediaDownloadOptions } from '@waha/core/media/IMediaManager';
 import { LottieMediaProcessorWrapper } from '@waha/core/media/LottieMediaProcessorWrapper';
 import { QR } from '@waha/core/QR';
 import { StatusToAck } from '@waha/core/utils/acks';
@@ -1337,7 +1338,6 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
       );
     }
 
-    const downloadMedia = query.downloadMedia;
     // Test there's chat with id
     await this.whatsapp.getChatById(this.ensureSuffix(chatId));
     const pagination: PaginationParams = query;
@@ -1347,8 +1347,13 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
       pagination,
     );
     const promises = [];
+    const params = {
+      download: query.downloadMedia,
+      mimetypes: query.downloadMediaMimetypes,
+    };
+    const options = lodash.defaults({}, params, this.media.api);
     for (const msg of messages) {
-      promises.push(this.processIncomingMessage(msg, downloadMedia));
+      promises.push(this.processIncomingMessage(msg, options));
     }
     let result = await Promise.all(promises);
     result = result.filter(Boolean);
@@ -1430,7 +1435,12 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
         return null;
       });
     }
-    return await this.processIncomingMessage(message, query.downloadMedia);
+    const params = {
+      download: query.downloadMedia,
+      mimetypes: query.downloadMediaMimetypes,
+    };
+    const options = lodash.defaults({}, params, this.media.api);
+    return await this.processIncomingMessage(message, options);
   }
 
   @Activity()
@@ -1964,21 +1974,24 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
       query.limit,
     );
     const promises = [];
+    const params = {
+      download: query.downloadMedia,
+      mimetypes: query.downloadMediaMimetypes,
+    };
+    const options = lodash.defaults({}, params, this.media.api);
     for (const msg of channelMessages) {
-      promises.push(
-        this.WebjsChannelMessageToChannelMessage(msg, query.downloadMedia),
-      );
+      promises.push(this.WebjsChannelMessageToChannelMessage(msg, options));
     }
     return await Promise.all(promises);
   }
 
   private async WebjsChannelMessageToChannelMessage(
     channelMessage: WebjsChannelMessage,
-    downloadMedia: boolean,
+    options: MediaDownloadOptions,
   ): Promise<ChannelMessage> {
     const message = await this.processIncomingMessage(
       channelMessage.message,
-      downloadMedia,
+      options,
     );
     const reactions = {};
     for (const reaction of channelMessage.reactions.sort((x) => -x.count)) {
@@ -2292,7 +2305,9 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
     const messageReceived$ = fromEvent(this.whatsapp, Events.MESSAGE_RECEIVED);
     const messagesFromOthers$ = messageReceived$.pipe(
       filter((msg: Message) => this.jids.include(msg?.id?.remote)),
-      mergeMap((msg: any) => this.processIncomingMessage(msg, true)),
+      mergeMap((msg: any) =>
+        this.processIncomingMessage(msg, this.media.events),
+      ),
       share(),
     );
     this.events2.get(WAHAEvents.MESSAGE).switch(messagesFromOthers$);
@@ -2300,7 +2315,9 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
     const messageCreate$ = fromEvent(this.whatsapp, Events.MESSAGE_CREATE);
     const messagesFromAll$ = messageCreate$.pipe(
       filter((msg: Message) => this.jids.include(msg?.id?.remote)),
-      mergeMap((msg: any) => this.processIncomingMessage(msg, true)),
+      mergeMap((msg: any) =>
+        this.processIncomingMessage(msg, this.media.events),
+      ),
       share(),
     );
     this.events2.get(WAHAEvents.MESSAGE_ANY).switch(messagesFromAll$);
@@ -2311,7 +2328,12 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
     );
     const messagesWaiting$ = messageCiphertext$.pipe(
       filter((msg: Message) => this.jids.include(msg?.id?.remote)),
-      mergeMap((msg: any) => this.processIncomingMessage(msg, false)),
+      mergeMap((msg: any) =>
+        this.processIncomingMessage(msg, {
+          ...this.media.events,
+          download: false,
+        }),
+      ),
       share(),
     );
     this.events2.get(WAHAEvents.MESSAGE_WAITING).switch(messagesWaiting$);
@@ -2543,19 +2565,20 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
 
   protected async processIncomingMessage(
     message: Message,
-    downloadMedia = true,
+    options: MediaDownloadOptions,
   ) {
     // Convert
     const wamessage = this.toWAMessage(message);
     // Media
-    if (downloadMedia) {
-      const media = await this.downloadMediaSafe(message);
-      wamessage.media = media;
-    }
-    if (downloadMedia && wamessage.replyTo?.hasMedia) {
+    const media = await this.downloadMediaSafe(message, options);
+    wamessage.media = media;
+    if (wamessage.replyTo?.hasMedia) {
       const quotedMessage = await message.getQuotedMessage().catch(() => null);
       if (quotedMessage) {
-        wamessage.replyTo.media = await this.downloadMediaSafe(quotedMessage);
+        wamessage.replyTo.media = await this.downloadMediaSafe(
+          quotedMessage,
+          options,
+        );
       }
     }
     return wamessage;
@@ -2773,25 +2796,24 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
     return contact;
   }
 
-  protected async downloadMediaSafe(message): Promise<WAMedia | null> {
+  protected async downloadMediaSafe(
+    message: Message,
+    options: MediaDownloadOptions,
+  ): Promise<WAMedia | null> {
     try {
-      return await this.downloadMedia(message);
+      let processor = new WEBJSEngineMediaProcessor();
+      processor = new LottieMediaProcessorWrapper(processor, this.logger);
+      const media = await this.mediaManager.processMedia(
+        processor,
+        message,
+        options,
+      );
+      return media;
     } catch (e) {
       this.logger.error('Failed when tried to download media for a message');
       this.logger.error(e, e.stack);
     }
     return null;
-  }
-
-  protected async downloadMedia(message: Message) {
-    let processor = new WEBJSEngineMediaProcessor();
-    processor = new LottieMediaProcessorWrapper(processor, this.logger);
-    const media = await this.mediaManager.processMedia(
-      processor,
-      message,
-      this.name,
-    );
-    return media;
   }
 
   protected getMessageOptions(request: any): any {

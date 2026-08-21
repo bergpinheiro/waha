@@ -132,6 +132,7 @@ import {
 } from '@waha/core/engines/wpp/WppTypes';
 import { NotImplementedByEngineError } from '@waha/core/exceptions';
 import { IMediaEngineProcessor } from '@waha/core/media/IMediaEngineProcessor';
+import { MediaDownloadOptions } from '@waha/core/media/IMediaManager';
 import { LottieMediaProcessorWrapper } from '@waha/core/media/LottieMediaProcessorWrapper';
 import { IWPPAuthManager } from '@waha/core/engines/wpp/IWPPAuthManager';
 import { QR } from '@waha/core/QR';
@@ -1103,7 +1104,6 @@ export class WhatsappSessionWPPCore extends WhatsappSession {
     const offset = query?.offset || 0;
     const limit = query?.limit || 10;
     const fetchCount = offset + limit;
-    const downloadMedia = query.downloadMedia;
     const rawMessages = await this.wpp!.getMessages(id, {
       count: fetchCount,
       direction: 'before',
@@ -1127,10 +1127,11 @@ export class WhatsappSessionWPPCore extends WhatsappSession {
       sortOrder: query?.sortOrder || SortOrder.DESC,
     }).apply(messages);
 
-    if (!downloadMedia) {
-      return messages;
-    }
-
+    const params = {
+      download: query.downloadMedia,
+      mimetypes: query.downloadMediaMimetypes,
+    };
+    const options = lodash.defaults({}, params, this.media.api);
     const promises = [];
     for (const message of messages) {
       const rawMessage = messagesById.get(message.id);
@@ -1138,7 +1139,7 @@ export class WhatsappSessionWPPCore extends WhatsappSession {
         promises.push(Promise.resolve(message));
         continue;
       }
-      promises.push(this.processIncomingMessage(rawMessage, true));
+      promises.push(this.processIncomingMessage(rawMessage, options));
     }
     let result = await Promise.all(promises);
     result = result.filter(Boolean);
@@ -1155,7 +1156,12 @@ export class WhatsappSessionWPPCore extends WhatsappSession {
     if (!message) {
       return null;
     }
-    return this.processIncomingMessage(message, query.downloadMedia);
+    const params = {
+      download: query.downloadMedia,
+      mimetypes: query.downloadMediaMimetypes,
+    };
+    const options = lodash.defaults({}, params, this.media.api);
+    return this.processIncomingMessage(message, options);
   }
 
   @Activity()
@@ -2429,25 +2435,23 @@ export class WhatsappSessionWPPCore extends WhatsappSession {
     };
   }
 
-  protected async processIncomingMessage(message: any, downloadMedia = true) {
+  protected async processIncomingMessage(
+    message: any,
+    options: MediaDownloadOptions,
+  ) {
     const wamessage = this.toWAMessage(message);
-    if (downloadMedia) {
-      const media = await this.downloadMediaSafe(message);
-      wamessage.media = media;
-    }
-    if (downloadMedia && wamessage.replyTo?.hasMedia) {
+    const media = await this.downloadMediaSafe(message, options);
+    wamessage.media = media;
+    if (wamessage.replyTo?.hasMedia) {
       const quotedMessage = message?.quotedMsg || message?._data?.quotedMsg;
       if (quotedMessage) {
-        wamessage.replyTo.media = await this.downloadMediaSafe(quotedMessage);
+        wamessage.replyTo.media = await this.downloadMediaSafe(
+          quotedMessage,
+          options,
+        );
       }
     }
     return wamessage;
-  }
-
-  protected async downloadMedia(message: any): Promise<WAMedia | null> {
-    let processor = new WPPEngineMediaProcessor(this.wpp);
-    processor = new LottieMediaProcessorWrapper(processor, this.logger);
-    return this.mediaManager.processMedia(processor, message, this.name);
   }
 
   protected checkStatusRequest(request: { contacts?: any[] }) {
@@ -2458,9 +2462,14 @@ export class WhatsappSessionWPPCore extends WhatsappSession {
     }
   }
 
-  protected async downloadMediaSafe(message): Promise<WAMedia | null> {
+  protected async downloadMediaSafe(
+    message: any,
+    options: MediaDownloadOptions,
+  ): Promise<WAMedia | null> {
     try {
-      return await this.downloadMedia(message);
+      let processor = new WPPEngineMediaProcessor(this.wpp);
+      processor = new LottieMediaProcessorWrapper(processor, this.logger);
+      return await this.mediaManager.processMedia(processor, message, options);
     } catch (error) {
       this.logger.error('Failed when tried to download media for a message');
       this.logger.error(error, error.stack);
@@ -2523,7 +2532,7 @@ export class WhatsappSessionWPPCore extends WhatsappSession {
     if (msg?.fromMe) {
       await sleep(3_000);
     }
-    return this.processIncomingMessage(msg, true);
+    return this.processIncomingMessage(msg, this.media.events);
   }
 
   private async refreshMeInfo() {

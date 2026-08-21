@@ -344,8 +344,8 @@ export class SessionManagerCore
     );
     await storage.init();
     const mediaManager = new MediaManager(
+      name,
       storage,
-      this.config.mimetypes,
       loggerBuilder.child({ name: 'MediaManager' }),
     );
     const webhook = new WebhookConductor(loggerBuilder);
@@ -359,6 +359,7 @@ export class SessionManagerCore
       proxyConfig: proxyConfig,
       sessionConfig: config,
       ignore: this.ignoreChatsConfig(config),
+      media: this.config.mediaConfig,
     };
     if (this.EngineClass === WhatsappSessionWebJSCore) {
       sessionConfig.engineConfig = this.webjsEngineConfigService.getConfig();
