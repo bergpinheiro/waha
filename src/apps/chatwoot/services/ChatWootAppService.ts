@@ -8,6 +8,7 @@ import { ChatWootWAHAQueueService } from '@waha/apps/chatwoot/services/ChatWootW
 import { App } from '@waha/apps/chatwoot/storage';
 import { SessionManager } from '@waha/core/abc/manager.abc';
 import { WhatsappSession } from '@waha/core/abc/session.abc';
+import { SessionPlugin } from '@waha/core/abc/session.plugin';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 
 import { DIContainer } from '../di/DIContainer';
@@ -150,6 +151,15 @@ export class ChatWootAppService implements IAppService {
       .key(TKey.APP_UPDATED_MESSAGE)
       .r({ name: app.session });
     await conversation.incoming(updated);
+  }
+
+  plugins(
+    app: App<ChatWootAppConfig>,
+    session: WhatsappSession,
+  ): SessionPlugin<any>[] {
+    void app;
+    void session;
+    return [];
   }
 
   beforeSessionStart(app: App<ChatWootAppConfig>, session: WhatsappSession) {

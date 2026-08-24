@@ -6,6 +6,7 @@ import { McpAppConfig } from '@waha/apps/mcp/dto/config.dto';
 import { SessionManager } from '@waha/core/abc/manager.abc';
 import { ApiKeyService } from '@waha/core/services/ApiKeyService';
 import { WhatsappSession } from '@waha/core/abc/session.abc';
+import { SessionPlugin } from '@waha/core/abc/session.plugin';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 
 @Injectable()
@@ -112,6 +113,15 @@ export class McpAppService implements IAppService {
       return;
     }
     app.config = { ...(app.config ?? {}), key: keyDto.key } as McpAppConfig;
+  }
+
+  plugins(
+    app: App<McpAppConfig>,
+    session: WhatsappSession,
+  ): SessionPlugin<any>[] {
+    void app;
+    void session;
+    return [];
   }
 
   beforeSessionStart(app: App<McpAppConfig>, session: WhatsappSession): void {

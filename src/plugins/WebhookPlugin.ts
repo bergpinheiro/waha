@@ -1,32 +1,35 @@
 import { populateSessionInfo } from '@waha/core/abc/manager.abc';
 import { WhatsappSession } from '@waha/core/abc/session.abc';
-import { WebhookSender } from '@waha/core/integrations/webhooks/WebhookSender';
+import { SessionPlugin } from '@waha/core/abc/session.plugin';
+import { WebhookSender } from '@waha/plugins/WebhookPlugin.sender';
 import { WAHAEvents, WAHAEventsWild } from '@waha/structures/enums.dto';
 import { WebhookConfig } from '@waha/structures/webhooks.config.dto';
 import { EventWildUnmask } from '@waha/utils/events';
-import { LoggerBuilder } from '@waha/utils/logging';
 import { Logger } from 'pino';
 
-export class WebhookConductor {
-  private logger: Logger;
+export class WebhookPluginConfig {
+  webhooks: WebhookConfig[];
+}
+
+/**
+ * Sends session events to the configured webhooks (per session and global ones)
+ */
+export class WebhookPlugin extends SessionPlugin<WebhookPluginConfig> {
   private eventUnmask = new EventWildUnmask(WAHAEvents, WAHAEventsWild);
 
-  constructor(protected loggerBuilder: LoggerBuilder) {
-    this.logger = loggerBuilder.child({ name: WebhookConductor.name });
-  }
-
-  protected buildSender(webhookConfig: WebhookConfig): WebhookSender {
-    return new WebhookSender(this.loggerBuilder, webhookConfig);
+  constructor(
+    session: WhatsappSession,
+    logger: Logger,
+    config: WebhookPluginConfig,
+  ) {
+    super(session, logger, config);
+    for (const webhookConfig of config.webhooks) {
+      this.configureSingleWebhook(session, webhookConfig);
+    }
   }
 
   private getSuitableEvents(events: WAHAEvents[] | string[]): WAHAEvents[] {
     return this.eventUnmask.unmask(events);
-  }
-
-  public configure(session: WhatsappSession, webhooks: WebhookConfig[]) {
-    for (const webhookConfig of webhooks) {
-      this.configureSingleWebhook(session, webhookConfig);
-    }
   }
 
   private configureSingleWebhook(
@@ -40,7 +43,7 @@ export class WebhookConductor {
     const url = webhook.url;
     this.logger.info(`Configuring webhooks for ${url}...`);
     const events = this.getSuitableEvents(webhook.events);
-    const sender = this.buildSender(webhook);
+    const sender = new WebhookSender(this.logger, webhook);
     for (const event of events) {
       const obs$ = session.getEventObservable(event);
       obs$.subscribe((payload) => {

@@ -1,62 +1,29 @@
-import { Subscription } from 'rxjs';
 import {
   CallsAppChannelConfig,
   CallsAppConfig,
 } from '@waha/apps/calls/dto/config.dto';
-import { Logger } from 'pino';
-import { App } from '@waha/apps/app_sdk/dto/app.dto';
-import { PinoLogger } from 'nestjs-pino';
-import { WhatsappSession } from '@waha/core/abc/session.abc';
-import { WAHAEvents, WAHAPresenceStatus } from '@waha/structures/enums.dto';
+import { SessionPlugin } from '@waha/core/abc/session.plugin';
+import { PluginEvent } from '@waha/core/abc/session.plugin.events';
 import { CallData } from '@waha/structures/calls.dto';
 import { MessageTextRequest } from '@waha/structures/chatting.dto';
+import { WAHAEvents, WAHAPresenceStatus } from '@waha/structures/enums.dto';
 import { sleep } from '@waha/utils/promiseTimeout';
+import { Observable } from 'rxjs';
 
-export class CallsListener {
-  private subscription?: Subscription;
-  private config: CallsAppConfig;
-  private readonly log: Logger;
-  private readonly session: WhatsappSession;
-
-  constructor(
-    app: App<CallsAppConfig>,
-    session: WhatsappSession,
-    logger: PinoLogger,
-  ) {
-    this.session = session;
-    this.config = app.config;
-    this.log = logger.logger.child({
-      app: 'calls',
-      session: app.session,
-    });
-  }
-
-  attach(): void {
-    this.detach();
-
-    const observable = this.session.getEventObservable(
-      WAHAEvents.CALL_RECEIVED,
-    );
-    if (!observable) {
-      this.log.warn('CALL_RECEIVED event stream is not available, skipping');
-      return;
-    }
-
-    this.subscription = observable.subscribe((payload) => {
-      this.handleCall(payload as CallData).catch((error) => {
-        this.log.error(
-          { err: error, callId: (payload as any)?.id },
+/**
+ * Rejects incoming calls and optionally sends an auto-reply message.
+ */
+export class CallsPlugin extends SessionPlugin<CallsAppConfig> {
+  @PluginEvent(WAHAEvents.CALL_RECEIVED)
+  onCallReceived(calls$: Observable<CallData>) {
+    calls$.subscribe((call: CallData) => {
+      this.handleCall(call).catch((error) => {
+        this.logger.error(
+          { err: error, callId: call?.id },
           'Failed to handle incoming call',
         );
       });
     });
-
-    this.log.info('Calls app listener is attached');
-  }
-
-  detach(): void {
-    this.subscription?.unsubscribe();
-    this.subscription = undefined;
   }
 
   private configFor(call: CallData): CallsAppChannelConfig {
@@ -65,17 +32,17 @@ export class CallsListener {
 
   private async handleCall(call: CallData): Promise<void> {
     if (!call.from) {
-      this.log.warn({ call: call?.id }, 'Incoming call has no chat id');
+      this.logger.warn({ call: call?.id }, 'Incoming call has no chat id');
       return;
     }
     if (!call.id) {
-      this.log.warn({ from: call.from }, 'Incoming call has no from');
+      this.logger.warn({ from: call.from }, 'Incoming call has no from');
       return;
     }
 
     const config = this.configFor(call);
     if (!config) {
-      this.log.warn({ callId: call.id }, 'No calls config found, skipping');
+      this.logger.warn({ callId: call.id }, 'No calls config found, skipping');
       return;
     }
 
@@ -84,7 +51,7 @@ export class CallsListener {
     const shouldMessage = message.length > 0;
 
     if (!shouldReject && !shouldMessage) {
-      this.log.debug(
+      this.logger.debug(
         { callId: call.id, chatId: call.from },
         'No actions configured for this call',
       );
@@ -105,16 +72,19 @@ export class CallsListener {
   }
 
   private async rejectCall(call: CallData): Promise<void> {
-    this.log.debug({ from: call.from, id: call.id }, 'Rejecting incoming call');
+    this.logger.debug(
+      { from: call.from, id: call.id },
+      'Rejecting incoming call',
+    );
     await this.session.rejectCall(call.from, call.id);
-    this.log.info({ from: call.from, id: call.id }, 'Call rejected');
+    this.logger.info({ from: call.from, id: call.id }, 'Call rejected');
   }
 
   private async replyWithTyping(
     chatId: string,
     message: string,
   ): Promise<void> {
-    this.log.info(
+    this.logger.info(
       { chatId: chatId },
       'Sending auto-response for rejected call',
     );
@@ -132,7 +102,7 @@ export class CallsListener {
     try {
       await this.session.setPresence(WAHAPresenceStatus.TYPING, chatId);
     } catch (error) {
-      this.log.warn(
+      this.logger.warn(
         { err: error, chatId: chatId },
         'Failed to set typing presence before reply',
       );
@@ -146,7 +116,7 @@ export class CallsListener {
     try {
       await this.session.setPresence(WAHAPresenceStatus.PAUSED, chatId);
     } catch (error) {
-      this.log.warn(
+      this.logger.warn(
         { err: error, chatId: chatId },
         'Failed to clear typing presence after reply',
       );

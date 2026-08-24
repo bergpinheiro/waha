@@ -1,6 +1,6 @@
 import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { GlobalWebhookConfigConfig } from '@waha/core/config/GlobalWebhookConfig';
+import { GlobalWebhookConfigConfig } from '@waha/plugins/WebhookPlugin.env';
 import { MediaDownloadOptions } from '@waha/core/media/IMediaManager';
 import { IgnoreJidConfig } from '@waha/core/utils/jids';
 import * as lodash from 'lodash';

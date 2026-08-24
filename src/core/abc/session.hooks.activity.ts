@@ -1,8 +1,7 @@
 import type { WhatsappSession } from '@waha/core/abc/session.abc';
 
 /**
- * Decorator to mark a method as an activity that
- * keeps the WhatsApp session online.
+ * Decorator to call "activity" hook
  * @constructor
  */
 export function Activity() {
@@ -16,7 +15,7 @@ export function Activity() {
       this: WhatsappSession,
       ...args: Parameters<T>
     ): Promise<ReturnType<T>> {
-      await this.maintainPresenceOnline();
+      await this.hooks.activity.promise(String(propertyKey));
       return await original.apply(this, args);
     } as T;
 

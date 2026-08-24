@@ -1,6 +1,7 @@
 import { App } from '@waha/apps/app_sdk/dto/app.dto';
 import { SessionManager } from '@waha/core/abc/manager.abc';
 import { WhatsappSession } from '@waha/core/abc/session.abc';
+import { SessionPlugin } from '@waha/core/abc/session.plugin';
 
 /**
  * Exact App service
@@ -53,6 +54,12 @@ export interface IAppService {
    * Use this to populate transient fields that are not persisted (e.g. secret values).
    */
   enrich(manager: SessionManager, app: App): Promise<void>;
+
+  /**
+   * Session plugins contributed by this app.
+   * The session manager registers their hooks and events before session.start().
+   */
+  plugins(app: App, session: WhatsappSession): SessionPlugin<any>[];
 
   beforeSessionStart(app: App, session: WhatsappSession): void;
 

@@ -212,6 +212,11 @@ export class AppsEnabledService implements IAppsService {
       if (!service && !AppRuntimeConfig.HasApp(app.app)) {
         throw new AppDisableError(app.app);
       }
+      const plugins = service.plugins(app, session);
+      for (const plugin of plugins) {
+        const key = `${plugin.constructor.name}:${app.id}`;
+        session.plugins[key] = plugin;
+      }
       service.beforeSessionStart(app, session);
     }
   }

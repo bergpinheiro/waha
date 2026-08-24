@@ -120,6 +120,7 @@
     "shell-quote": "^1.8.3",
     "sqlite3": "^5.1.7",
     "swagger-ui-express": "^4.1.4",
+    "tapable": "^2.2.2",
     "ulid": "^2.3.0",
     "undici": "^7.16.0",
     "uniqid": "^5.4.0",

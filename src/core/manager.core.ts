@@ -19,7 +19,6 @@ import { WhatsappSessionNoWebCore } from '@waha/core/engines/noweb/session.noweb
 import { WhatsappSessionWPPCore } from '@waha/core/engines/wpp/session.wpp.core';
 import { WhatsappSessionWebJSCore } from '@waha/core/engines/webjs/session.webjs.core';
 import { getProxyConfig } from '@waha/core/helpers.proxy';
-import { WebhookConductor } from '@waha/core/integrations/webhooks/WebhookConductor';
 import { MediaManager } from '@waha/core/media/MediaManager';
 import { MediaStorageFactory } from '@waha/core/media/MediaStorageFactory';
 import { LocalSessionAuthRepository } from '@waha/core/storage/LocalSessionAuthRepository';
@@ -70,8 +69,21 @@ import {
 } from '../structures/sessions.dto';
 import { WebhookConfig } from '../structures/webhooks.config.dto';
 import { populateSessionInfo, SessionManager } from './abc/manager.abc';
+import type { SessionPlugin } from '@waha/core/abc/session.plugin';
+import { RegisterPluginEvents } from '@waha/core/abc/session.plugin.events';
+import { RegisterPluginHooks } from '@waha/core/abc/session.plugin.hooks';
+
 import { SessionParams, WhatsappSession } from './abc/session.abc';
 import { EngineConfigService } from './config/EngineConfigService';
+import { WidEnsureSuffixPlugin } from '@waha/plugins/WidEnsureSuffixPlugin';
+import { MaintainOnlineStatusPlugin } from '@waha/plugins/MaintainOnlineStatusPlugin';
+import { MessageSourceCachePlugin } from '@waha/plugins/MessageSourceCachePlugin';
+import { SessionRuntimeInfoPlugin } from '@waha/plugins/SessionRuntimeInfoPlugin';
+import { WebhookPlugin } from '@waha/plugins/WebhookPlugin';
+import {
+  PRESENCE_AUTO_ONLINE,
+  PRESENCE_AUTO_ONLINE_DURATION_SECONDS,
+} from '@waha/plugins/MaintainOnlineStatusPlugin.env';
 
 const ALL = '*';
 
@@ -348,7 +360,6 @@ export class SessionManagerCore
       storage,
       loggerBuilder.child({ name: 'MediaManager' }),
     );
-    const webhook = new WebhookConductor(loggerBuilder);
     const proxyConfig = this.getProxyConfig(name, config);
     const sessionConfig: SessionParams = {
       name,
@@ -376,16 +387,59 @@ export class SessionManagerCore
     this.sessions[name] = session;
     this.updateSessions();
 
-    // configure webhooks
-    const webhooks = this.getWebhooks(config);
-    webhook.configure(session, webhooks);
-
-    // Apps
+    // Plugins
+    {
+      const logger = loggerBuilder.child({
+        plugin: SessionRuntimeInfoPlugin.name,
+      });
+      session.plugins[SessionRuntimeInfoPlugin.name] =
+        new SessionRuntimeInfoPlugin(session, logger);
+    }
+    {
+      const webhooks = this.getWebhooks(config);
+      const logger = loggerBuilder.child({ plugin: WebhookPlugin.name });
+      session.plugins[WebhookPlugin.name] = new WebhookPlugin(session, logger, {
+        webhooks: webhooks,
+      });
+    }
+    if (PRESENCE_AUTO_ONLINE) {
+      const config = {
+        duration: PRESENCE_AUTO_ONLINE_DURATION_SECONDS * 1000,
+      };
+      const logger = loggerBuilder.child({
+        plugin: MaintainOnlineStatusPlugin.name,
+      });
+      session.plugins[MaintainOnlineStatusPlugin.name] =
+        new MaintainOnlineStatusPlugin(session, logger, config);
+    }
+    {
+      const logger = loggerBuilder.child({
+        plugin: MessageSourceCachePlugin.name,
+      });
+      session.plugins[MessageSourceCachePlugin.name] =
+        new MessageSourceCachePlugin(session, logger);
+    }
+    {
+      const logger = loggerBuilder.child({
+        plugin: WidEnsureSuffixPlugin.name,
+      });
+      session.plugins[WidEnsureSuffixPlugin.name] = new WidEnsureSuffixPlugin(
+        session,
+        logger,
+      );
+    }
+    // Apps (may contribute their own plugins to the session)
     try {
       await this.appsService.beforeSessionStart(session, this.store);
     } catch (e) {
       logger.error(`Apps Error: ${e}`);
       session.status = WAHASessionStatus.FAILED;
+    }
+
+    const plugins: SessionPlugin<any>[] = Object.values(session.plugins);
+    for (const plugin of plugins) {
+      RegisterPluginHooks(plugin);
+      RegisterPluginEvents(plugin);
     }
 
     // start session
@@ -514,27 +568,17 @@ export class SessionManagerCore
   /**
    * Get all runtime sessions
    */
-  private getRuntimeSessions(name: string = null): SessionInfo[] {
+  private async getRuntimeSessions(
+    name: string = null,
+  ): Promise<SessionInfo[]> {
     let names = Object.keys(this.sessions);
     if (name) {
       names = names.filter((n) => n === name);
     }
-    const sessions = names.map((sessionName) => {
-      const status = this.sessions[sessionName].status;
-      const sessionConfig = this.sessions[sessionName].sessionConfig;
-      const me = this.sessions[sessionName].getSessionMeInfo();
-      return {
-        name: sessionName,
-        status: status,
-        config: sessionConfig,
-        me: me,
-        presence: this.sessions[sessionName].presence,
-        timestamps: {
-          activity: this.sessions[sessionName].getLastActivityTimestamp(),
-        },
-      };
-    });
-    return sessions;
+    const sessions = names.map((sessionName) =>
+      this.sessions[sessionName].getSessionInfo(),
+    );
+    return await Promise.all(sessions);
   }
 
   /**
@@ -568,7 +612,7 @@ export class SessionManagerCore
   }
 
   async getSessions(all: boolean): Promise<SessionInfo[]> {
-    const runtimeSessions = this.getRuntimeSessions();
+    const runtimeSessions = await this.getRuntimeSessions();
     let offlineSessions: SessionInfo[] = [];
     if (all) {
       offlineSessions = await this.getOfflineSessions();
@@ -595,7 +639,7 @@ export class SessionManagerCore
     let session: SessionDetailedInfo = null;
 
     // Try to find session in runtime sessions
-    const runtimeSessions = this.getRuntimeSessions(name);
+    const runtimeSessions = await this.getRuntimeSessions(name);
     if (runtimeSessions.length === 1) {
       session = runtimeSessions[0];
     }

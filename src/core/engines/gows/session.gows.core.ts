@@ -44,6 +44,7 @@ import {
 } from '@waha/core/engines/noweb/session.noweb.core';
 import { extractMediaContent } from '@waha/core/engines/noweb/utils';
 import { NotImplementedByEngineError } from '@waha/core/exceptions';
+import { WidToJIDPlugin } from '@waha/plugins/WidToJIDPlugin';
 import { IMediaEngineProcessor } from '@waha/core/media/IMediaEngineProcessor';
 import { LottieMediaProcessorWrapper } from '@waha/core/media/LottieMediaProcessorWrapper';
 import { QR } from '@waha/core/QR';
@@ -53,9 +54,7 @@ import {
   isJidBroadcast,
   isJidGroup,
   isJidNewsletter,
-  normalizeJid,
   toCusFormat,
-  toJID,
 } from '@waha/core/utils/jids';
 import {
   PasskeyChallenge,
@@ -212,7 +211,6 @@ import { IsEditedMessage } from '@waha/core/utils/pwa';
 import { GoToJSWAProto } from '@waha/core/engines/gows/waproto';
 import { extractWALocation } from '@waha/core/engines/waproto/locaiton';
 import { extractVCards } from '@waha/core/engines/waproto/vcards';
-import { Activity } from '@waha/core/abc/activity';
 import { TmpDir } from '@waha/utils/tmpdir';
 import { detectMimetype } from '@waha/utils/files';
 import { WAMimeType } from '@waha/core/media/WAMimeType';
@@ -223,6 +221,8 @@ import * as path from 'path';
 import MessageServiceClient = messages.MessageServiceClient;
 import * as fsp from 'fs/promises';
 import { MediaDownloadOptions } from '@waha/core/media/IMediaManager';
+
+import { Activity } from '@waha/core/abc/session.hooks.activity';
 
 axiosRetry(axios, { retries: 3 });
 
@@ -301,6 +301,10 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
 
   public constructor(config) {
     super(config);
+    this.plugins[WidToJIDPlugin.name] = new WidToJIDPlugin(
+      this,
+      this.loggerBuilder.child({ plugin: WidToJIDPlugin.name }),
+    );
     this.qr = new QR();
     this.session = new messages.Session({ id: this.name });
     this.presences = new NodeCache({
@@ -420,14 +424,12 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
 
     events.on(WhatsMeowEvent.DISCONNECTED, () => {
       if (this.status != WAHASessionStatus.STARTING) {
-        this.cleanupPresenceTimeout();
         this.presence = null;
         this.status = WAHASessionStatus.STARTING;
       }
     });
     events.on(WhatsMeowEvent.KEEP_ALIVE_TIMEOUT, () => {
       if (this.status != WAHASessionStatus.STARTING) {
-        this.cleanupPresenceTimeout();
         this.presence = null;
         this.status = WAHASessionStatus.STARTING;
       }
@@ -866,7 +868,10 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
 
   @Activity()
   async fetchContactProfilePicture(id: string): Promise<string> {
-    const jid = normalizeJid(toJID(this.ensureSuffix(id)));
+    const jid = await this.hooks.wid.chat.promise(
+      id,
+      'fetchContactProfilePicture',
+    );
     const request = new messages.ProfilePictureRequest({
       jid: jid,
       session: this.session,
@@ -883,7 +888,6 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
   }
 
   async stop(): Promise<void> {
-    this.cleanupPresenceTimeout();
     this.status = WAHASessionStatus.STOPPED;
     this.events?.stop();
     this.stopEvents();
@@ -1049,6 +1053,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
     return true;
   }
 
+  @Activity()
   protected async deleteProfilePicture(): Promise<boolean> {
     const request = new messages.SetProfilePictureRequest({
       session: this.session,
@@ -1071,9 +1076,10 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
 
   @Activity()
   async rejectCall(from: string, id: string): Promise<void> {
+    const jid = await this.hooks.wid.chat.promise(from, 'rejectCall');
     const request = new messages.RejectCallRequest({
       session: this.session,
-      from: normalizeJid(toJID(this.ensureSuffix(from))),
+      from: jid,
       id: id,
     });
     await promisify(this.client.RejectCall)(request);
@@ -1081,7 +1087,15 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
 
   @Activity()
   async sendText(request: MessageTextRequest) {
-    const jid = normalizeJid(toJID(this.ensureSuffix(request.chatId)));
+    const jid = await this.hooks.wid.chat.promise(request.chatId, 'sendText');
+    let mentions: string[] | undefined;
+    if (request.mentions) {
+      mentions = await Promise.all(
+        request.mentions.map((mention) =>
+          this.hooks.wid.mention.promise(mention, 'sendText'),
+        ),
+      );
+    }
     const message = new messages.MessageRequest({
       id: request.id,
       jid: jid,
@@ -1090,9 +1104,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
       linkPreview: request.linkPreview ?? true,
       linkPreviewHighQuality: request.linkPreviewHighQuality,
       replyTo: getMessageIdFromSerialized(request.reply_to),
-      mentions: request.mentions?.map((mention) =>
-        normalizeJid(toJID(mention)),
-      ),
+      mentions: mentions,
     });
     const response = await promisify(this.client.SendMessage)(message);
     const data = response.toObject();
@@ -1105,7 +1117,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
     messageId: string,
     request: EditMessageRequest,
   ) {
-    const jid = normalizeJid(toJID(this.ensureSuffix(chatId)));
+    const jid = await this.hooks.wid.chat.promise(chatId, 'editMessage');
     const key = parseMessageIdSerialized(messageId, true);
     const message = new messages.EditMessageRequest({
       session: this.session,
@@ -1122,7 +1134,10 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
 
   @Activity()
   async sendContactVCard(request: MessageContactVcardRequest) {
-    const jid = normalizeJid(toJID(this.ensureSuffix(request.chatId)));
+    const jid = await this.hooks.wid.chat.promise(
+      request.chatId,
+      'sendContactVCard',
+    );
     const contacts = request.contacts.map((el) => ({
       displayName:
         (el as any).fullName || parseVCardV3(el.vcard || '').fullName,
@@ -1142,7 +1157,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
 
   @Activity()
   async sendPoll(request: MessagePollRequest) {
-    const jid = normalizeJid(toJID(request.chatId));
+    const jid = await this.hooks.wid.chat.promise(request.chatId, 'sendPoll');
     const message = new messages.MessageRequest({
       id: request.id,
       jid: jid,
@@ -1161,7 +1176,10 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
 
   @Activity()
   async sendPollVote(request: MessagePollVoteRequest) {
-    const jid = normalizeJid(toJID(this.ensureSuffix(request.chatId)));
+    const jid = await this.hooks.wid.chat.promise(
+      request.chatId,
+      'sendPollVote',
+    );
     const key = parseMessageIdSerialized(request.pollMessageId, true);
     const pollVote = new messages.PollVoteMessage({
       pollMessageId: key.id,
@@ -1183,7 +1201,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
 
   @Activity()
   async sendList(request: SendListRequest): Promise<any> {
-    const jid = normalizeJid(toJID(this.ensureSuffix(request.chatId)));
+    const jid = await this.hooks.wid.chat.promise(request.chatId, 'sendList');
     if (isJidGroup(jid) || isJidBroadcast(jid) || isJidNewsletter(jid)) {
       throw new UnprocessableEntityException(
         `List message can only be sent to a direct message chat.`,
@@ -1210,7 +1228,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
 
   @Activity()
   public async deleteMessage(chatId: string, messageId: string) {
-    const jid = normalizeJid(toJID(this.ensureSuffix(chatId)));
+    const jid = await this.hooks.wid.chat.promise(chatId, 'deleteMessage');
     const key = parseMessageIdSerialized(messageId);
     const message = new messages.RevokeMessageRequest({
       session: this.session,
@@ -1227,7 +1245,11 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
     if (!contacts || contacts.length == 0) {
       return [];
     }
-    return contacts.map((c) => normalizeJid(toJID(c)));
+    return await Promise.all(
+      contacts.map((c) =>
+        this.hooks.wid.chat.promise(c, 'prepareJidsForStatus'),
+      ),
+    );
   }
 
   @Activity()
@@ -1253,6 +1275,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
     return this.messageResponse(Jid.BROADCAST, data);
   }
 
+  @Activity()
   public async deleteStatus(request: DeleteStatusRequest) {
     const participants = await this.prepareJidsForStatus(request.contacts);
     const key = parseMessageIdSerialized(request.id, true);
@@ -1304,7 +1327,10 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
 
   @Activity()
   async sendLocation(request: MessageLocationRequest) {
-    const jid = normalizeJid(toJID(this.ensureSuffix(request.chatId)));
+    const jid = await this.hooks.wid.chat.promise(
+      request.chatId,
+      'sendLocation',
+    );
     const message = new messages.MessageRequest({
       id: request.id,
       jid: jid,
@@ -1326,7 +1352,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
   }
 
   private async sendMedia(type: messages.MediaType, request: any) {
-    const jid = normalizeJid(toJID(this.ensureSuffix(request.chatId)));
+    const jid = await this.hooks.wid.chat.promise(request.chatId, 'sendMedia');
     const media = await this.fileToMedia(request.file);
     media.type = type;
     if (type === messages.MediaType.IMAGE) {
@@ -1378,6 +1404,14 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
       });
     }
     const participants = await this.prepareJidsForStatus(request.contacts);
+    let mentions: string[] | undefined;
+    if (request.mentions) {
+      mentions = await Promise.all(
+        request.mentions.map((mention) =>
+          this.hooks.wid.mention.promise(mention, 'sendMedia'),
+        ),
+      );
+    }
     const message = new messages.MessageRequest({
       id: request.id,
       jid: jid,
@@ -1385,9 +1419,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
       session: this.session,
       media: media,
       backgroundColor: backgroundColor,
-      mentions: request.mentions?.map((mention) =>
-        normalizeJid(toJID(mention)),
-      ),
+      mentions: mentions,
       participants: participants,
     });
 
@@ -1463,7 +1495,10 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
   async sendLinkCustomPreview(
     request: MessageLinkCustomPreviewRequest,
   ): Promise<any> {
-    const jid = normalizeJid(toJID(this.ensureSuffix(request.chatId)));
+    const jid = await this.hooks.wid.chat.promise(
+      request.chatId,
+      'sendLinkCustomPreview',
+    );
     const media = await this.fileToMedia(request.preview.image as RemoteFile);
     const preview = new messages.LinkPreview({
       url: request.preview.url,
@@ -1490,7 +1525,10 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
     throw new NotImplementedByEngineError();
 
     // Doesn't work yet
-    const jid = normalizeJid(toJID(this.ensureSuffix(request.chatId)));
+    const jid = await this.hooks.wid.chat.promise(
+      request.chatId,
+      'sendButtonsReply',
+    );
     const message = new messages.ButtonReplyRequest({
       jid: jid,
       session: this.session,
@@ -1573,10 +1611,15 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
    */
   @Activity()
   public async createGroup(request: CreateGroupRequest) {
+    const participants = await Promise.all(
+      request.participants.map((p) =>
+        this.hooks.wid.chat.promise(p.id, 'createGroup'),
+      ),
+    );
     const req = new messages.CreateGroupRequest({
       session: this.session,
       name: request.name,
-      participants: request.participants.map((p) => normalizeJid(toJID(p.id))),
+      participants: participants,
     });
     const response = await promisify(this.client.CreateGroup)(req);
     const data = parseJson(response);
@@ -1763,7 +1806,11 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
     participants: Array<Participant>,
     action: messages.ParticipantRequestAction,
   ): Promise<GroupJoinRequestResult[]> {
-    const jids = participants.map((p) => normalizeJid(toJID(p.id)));
+    const jids = await Promise.all(
+      participants.map((p) =>
+        this.hooks.wid.chat.promise(p.id, 'updateRequestParticipants'),
+      ),
+    );
     const req = new messages.UpdateRequestParticipantsRequest({
       session: this.session,
       jid: id,
@@ -1869,7 +1916,11 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
     participants: Array<Participant>,
     action: messages.ParticipantAction,
   ): Promise<any> {
-    const jids = participants.map((p) => normalizeJid(toJID(p.id)));
+    const jids = await Promise.all(
+      participants.map((p) =>
+        this.hooks.wid.chat.promise(p.id, 'updateParticipants'),
+      ),
+    );
     const req = new messages.UpdateParticipantsRequest({
       session: this.session,
       jid: id,
@@ -1922,7 +1973,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
 
   @Activity()
   async sendEvent(request: EventMessageRequest): Promise<WAMessage> {
-    const jid = normalizeJid(toJID(this.ensureSuffix(request.chatId)));
+    const jid = await this.hooks.wid.chat.promise(request.chatId, 'sendEvent');
     const event = request.event;
 
     // Create EventLocation if provided
@@ -1978,7 +2029,10 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
   public async setPresence(presence: WAHAPresenceStatus, chatId?: string) {
     let request: any;
     let method: any;
-    const jid = chatId ? normalizeJid(toJID(this.ensureSuffix(chatId))) : null;
+    let jid: string | null = null;
+    if (chatId) {
+      jid = await this.hooks.wid.chat.promise(chatId, 'setPresence');
+    }
     switch (presence) {
       case WAHAPresenceStatus.ONLINE:
         request = new messages.PresenceRequest({
@@ -1995,7 +2049,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
         method = this.client.SendPresence;
         break;
       case WAHAPresenceStatus.TYPING:
-        await this.maintainPresenceOnline();
+        await this.hooks.activity.promise('setPresence');
         request = new messages.ChatPresenceRequest({
           session: this.session,
           jid: jid,
@@ -2004,7 +2058,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
         method = this.client.SendChatPresence;
         break;
       case WAHAPresenceStatus.RECORDING:
-        await this.maintainPresenceOnline();
+        await this.hooks.activity.promise('setPresence');
         request = new messages.ChatPresenceRequest({
           session: this.session,
           jid: jid,
@@ -2013,7 +2067,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
         method = this.client.SendChatPresence;
         break;
       case WAHAPresenceStatus.PAUSED:
-        await this.maintainPresenceOnline();
+        await this.hooks.activity.promise('setPresence');
         request = new messages.ChatPresenceRequest({
           session: this.session,
           jid: jid,
@@ -2039,7 +2093,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
   }
 
   public async getPresence(chatId: string): Promise<WAHAChatPresences> {
-    const jid = normalizeJid(toJID(chatId));
+    const jid = await this.hooks.wid.chat.promise(chatId, 'getPresence');
     await this.subscribePresence(jid);
     if (!(jid in this.presences.keys())) {
       await sleep(1000);
@@ -2050,7 +2104,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
 
   @Activity()
   async subscribePresence(chatId: string) {
-    const jid = normalizeJid(toJID(chatId));
+    const jid = await this.hooks.wid.chat.promise(chatId, 'subscribePresence');
     const req = new messages.SubscribePresenceRequest({
       session: this.session,
       jid: jid,
@@ -2256,6 +2310,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
     };
   }
 
+  @Activity()
   public async channelsList(query: ListChannelsQuery): Promise<Channel[]> {
     const request = new messages.NewsletterListRequest({
       session: this.session,
@@ -2357,7 +2412,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
    */
   @Activity()
   public async upsertContact(chatId: string, body: ContactUpdateBody) {
-    const jid = normalizeJid(toJID(chatId));
+    const jid = await this.hooks.wid.chat.promise(chatId, 'upsertContact');
     const request = new messages.UpdateContactRequest({
       session: this.session,
       jid: jid,
@@ -2377,7 +2432,10 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
   }
 
   public async getContact(query: ContactQuery) {
-    const jid = normalizeJid(toJID(query.contactId));
+    const jid = await this.hooks.wid.chat.promise(
+      query.contactId,
+      'getContact',
+    );
     const request = new messages.EntityByIdRequest({
       session: this.session,
       id: jid,
@@ -2472,7 +2530,10 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
   public async findLIDByPhoneNumber(
     phoneNumber: string,
   ): Promise<LidToPhoneNumber> {
-    const pn = normalizeJid(toJID(phoneNumber));
+    const pn = await this.hooks.wid.chat.promise(
+      phoneNumber,
+      'findLIDByPhoneNumber',
+    );
     const request = new messages.EntityByIdRequest({
       session: this.session,
       id: pn,
@@ -2551,7 +2612,9 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
     }
     let jids = [];
     if (filter?.ids && filter.ids.length > 0) {
-      jids = filter.ids.map((id) => normalizeJid(toJID(id)));
+      jids = await Promise.all(
+        filter.ids.map((id) => this.hooks.wid.chat.promise(id, 'getChats')),
+      );
     }
     const request = new messages.GetChatsRequest({
       session: this.session,
@@ -2586,8 +2649,12 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
     if (chatId === 'all') {
       jid = null;
     } else {
+      const value = await this.hooks.wid.chat.promise(
+        chatId,
+        'getChatMessages',
+      );
       jid = new messages.OptionalString({
-        value: normalizeJid(toJID(this.ensureSuffix(chatId))),
+        value: value,
       });
     }
 
@@ -2746,7 +2813,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
   }
 
   public async getChatLabels(chatId: string): Promise<Label[]> {
-    const jid = normalizeJid(toJID(chatId));
+    const jid = await this.hooks.wid.chat.promise(chatId, 'getChatLabels');
     const request = new messages.EntityByIdRequest({
       session: this.session,
       id: jid,
@@ -2758,7 +2825,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
 
   @Activity()
   public async chatsUnreadChat(chatId: string): Promise<any> {
-    const jid = normalizeJid(toJID(this.ensureSuffix(chatId)));
+    const jid = await this.hooks.wid.chat.promise(chatId, 'chatsUnreadChat');
     const request = new messages.ChatUnreadRequest({
       session: this.session,
       jid: jid,
@@ -2770,7 +2837,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
 
   @Activity()
   public async putLabelsToChat(chatId: string, labels: LabelID[]) {
-    const jid = normalizeJid(toJID(chatId));
+    const jid = await this.hooks.wid.chat.promise(chatId, 'putLabelsToChat');
     const labelsIds = labels.map((label) => label.id);
     const currentLabels = await this.getChatLabels(jid);
     const currentLabelsIds = currentLabels.map((label) => label.id);
