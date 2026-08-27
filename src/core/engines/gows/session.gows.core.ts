@@ -109,6 +109,7 @@ import { SendListRequest } from '@waha/structures/chatting.list.dto';
 import { ContactQuery, ContactUpdateBody } from '@waha/structures/contacts.dto';
 import {
   ACK_UNKNOWN,
+  WAHAEngine,
   WAHAEvents,
   WAHAPresenceStatus,
   WAHASessionStatus,
@@ -285,6 +286,8 @@ export interface GowsConfig {
 }
 
 export class WhatsappSessionGoWSCore extends WhatsappSession {
+  engine = WAHAEngine.GOWS;
+
   protected authFactory = new GowsAuthFactoryCore();
 
   protected qr: QR;
