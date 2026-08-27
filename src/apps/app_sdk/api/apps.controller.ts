@@ -31,7 +31,7 @@ import {
 import { Action, session as SessionName } from '@waha/core/auth/casl.types';
 import { WAHAValidationPipe } from '@waha/nestjs/pipes/WAHAValidationPipe';
 
-import { APPS } from '../apps/definition';
+import { GetApp } from '../apps/registry';
 import { App } from '../dto/app.dto';
 import { ListAppsQuery } from '../dto/query.dto';
 
@@ -63,7 +63,11 @@ export class AppsController {
   async create(@Body() app: App): Promise<App> {
     const result = await this.appsService.create(this.manager, app);
     const isRunning = this.manager.isRunning(app.session);
-    if (isRunning && app.enabled && APPS[app.app].restartOnChange) {
+    if (
+      isRunning &&
+      app.enabled &&
+      GetApp(app.app)?.definition.restartOnChange
+    ) {
       await this.manager.restart(app.session);
     }
     return result;
@@ -114,7 +118,7 @@ export class AppsController {
 
     const result = await this.appsService.upsert(this.manager, app);
     const isRunning = this.manager.isRunning(result.session);
-    if (isRunning && APPS[result.app].restartOnChange) {
+    if (isRunning && GetApp(result.app)?.definition.restartOnChange) {
       await this.manager.restart(result.session);
     }
     return result;
@@ -134,7 +138,7 @@ export class AppsController {
     }
     const app = await this.appsService.delete(this.manager, id);
     const isRunning = this.manager.isRunning(app.session);
-    if (isRunning && APPS[app.app].restartOnChange) {
+    if (isRunning && GetApp(app.app)?.definition.restartOnChange) {
       await this.manager.restart(app.session);
     }
   }

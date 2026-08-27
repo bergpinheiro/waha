@@ -1,8 +1,9 @@
+import { Type } from '@nestjs/common';
 import { AppName } from '@waha/apps/app_sdk/apps/name';
+import { GetApp } from '@waha/apps/app_sdk/apps/registry';
+import { IAppService } from '@waha/apps/app_sdk/services/IAppService';
 
 export interface AppDefinition {
-  // App name
-  name: AppName;
   // If app requires WAHA_API_KEY_PLAIN to work
   plainkey: boolean;
   // If app requires queue to work
@@ -15,44 +16,32 @@ export interface AppDefinition {
   unique: boolean;
 }
 
-// All Apps
-export const APPS: Record<AppName, AppDefinition> = {
-  [AppName.calls]: {
-    name: AppName.calls,
-    plainkey: false,
-    queue: false,
-    migrations: false,
-    restartOnChange: true,
-    unique: true,
-  },
-  [AppName.chatwoot]: {
-    name: AppName.chatwoot,
-    plainkey: true,
-    queue: true,
-    migrations: true,
-    restartOnChange: true,
-    unique: true,
-  },
-  [AppName.mcp]: {
-    name: AppName.mcp,
-    plainkey: false,
-    queue: false,
-    migrations: false,
-    restartOnChange: false,
-    unique: false,
-  },
-  [AppName.brazilianPhoneNumbers]: {
-    name: AppName.brazilianPhoneNumbers,
-    plainkey: false,
-    queue: false,
-    migrations: true,
-    restartOnChange: true,
-    unique: true,
-  },
-};
+// NestJS module parts, included when the app is enabled in runtime configuration
+export interface AppNestJS {
+  imports: any[];
+  controllers: any[];
+  providers: any[];
+}
+
+/**
+ * Contract for the default export of 'src/apps/<name>/app.module.ts'.
+ * Each app self-describes with this and gets listed in the registry ('apps/registry.ts').
+ */
+export interface AppModule {
+  // App name
+  name: AppName;
+  // Static app metadata (requirements, behavior flags)
+  definition: AppDefinition;
+  // NestJS module parts
+  nestjs: AppNestJS;
+  // Service implementing app lifecycle hooks; must also be listed in 'nestjs.providers'
+  Service: Type<IAppService>;
+  // DTO class used to transform and validate App.config
+  ConfigClass: Type<any>;
+}
 
 export function isUniqueApp(name: AppName): boolean {
-  return APPS[name]?.unique === true;
+  return GetApp(name)?.definition.unique === true;
 }
 
 // Returns the first unique AppName that appears more than once in the list, or null

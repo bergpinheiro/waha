@@ -1,7 +1,3 @@
-import { BrazilianPhoneNumbersAppConfig } from '@waha/apps/brazilian-phone-numbers/dto/config.dto';
-import { ChatWootAppConfig } from '@waha/apps/chatwoot/dto/config.dto';
-import { CallsAppConfig } from '@waha/apps/calls/dto/config.dto';
-import { McpAppConfig } from '@waha/apps/mcp/dto/config.dto';
 import { Type } from 'class-transformer';
 import {
   IsBoolean,
@@ -10,22 +6,11 @@ import {
   IsString,
   ValidateNested,
 } from 'class-validator';
-import { ApiExtraModels, ApiProperty } from '@nestjs/swagger';
+import { ApiProperty } from '@nestjs/swagger';
 import { AppName } from '@waha/apps/app_sdk/apps/name';
+import { GetApp } from '@waha/apps/app_sdk/apps/registry';
 
-export type AllowedAppConfig =
-  | ChatWootAppConfig
-  | CallsAppConfig
-  | McpAppConfig
-  | BrazilianPhoneNumbersAppConfig;
-
-@ApiExtraModels(
-  ChatWootAppConfig,
-  CallsAppConfig,
-  McpAppConfig,
-  BrazilianPhoneNumbersAppConfig,
-)
-export class App<T extends AllowedAppConfig = any> {
+export class App<T = any> {
   @IsString()
   id: string;
 
@@ -48,47 +33,11 @@ export class App<T extends AllowedAppConfig = any> {
 
   @ValidateNested()
   @Type((options) => {
-    if (options && options.object && options.object.app) {
-      switch (options.object.app) {
-        case AppName.chatwoot:
-          return ChatWootAppConfig;
-        case AppName.calls:
-          return CallsAppConfig;
-        case AppName.mcp:
-          return McpAppConfig;
-        case AppName.brazilianPhoneNumbers:
-          return BrazilianPhoneNumbersAppConfig;
-        default:
-          return Object;
-      }
+    const name = options?.object?.app;
+    if (!name) {
+      return Object;
     }
-    return Object;
+    return GetApp(name)?.ConfigClass ?? Object;
   })
   config: T;
 }
-
-export class ChatWootAppDto extends App<ChatWootAppConfig> {
-  @Type(() => ChatWootAppConfig)
-  config: ChatWootAppConfig;
-}
-
-export class CallsAppDto extends App<CallsAppConfig> {
-  @Type(() => CallsAppConfig)
-  config: CallsAppConfig;
-}
-
-export class McpAppDto extends App<McpAppConfig> {
-  @Type(() => McpAppConfig)
-  config: McpAppConfig;
-}
-
-export class BrazilianPhoneNumbersAppDto extends App<BrazilianPhoneNumbersAppConfig> {
-  @Type(() => BrazilianPhoneNumbersAppConfig)
-  config: BrazilianPhoneNumbersAppConfig;
-}
-
-export type AppDto =
-  | ChatWootAppDto
-  | CallsAppDto
-  | McpAppDto
-  | BrazilianPhoneNumbersAppDto;

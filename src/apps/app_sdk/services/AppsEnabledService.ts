@@ -1,16 +1,12 @@
 import {
   Injectable,
   NotFoundException,
-  Optional,
   UnprocessableEntityException,
 } from '@nestjs/common';
+import { ModuleRef } from '@nestjs/core';
 import { migrate } from '@waha/apps/app_sdk/migrations';
 import { IAppService } from '@waha/apps/app_sdk/services/IAppService';
 import { IAppsService } from '@waha/apps/app_sdk/services/IAppsService';
-import { BrazilianPhoneNumbersAppService } from '@waha/apps/brazilian-phone-numbers/services/BrazilianPhoneNumbersAppService';
-import { ChatWootAppService } from '@waha/apps/chatwoot/services/ChatWootAppService';
-import { CallsAppService } from '@waha/apps/calls/services/CallsAppService';
-import { McpAppService } from '@waha/apps/mcp/services/McpAppService';
 import { DataStore } from '@waha/core/abc/DataStore';
 import { SessionManager } from '@waha/core/abc/manager.abc';
 import { WhatsappSession } from '@waha/core/abc/session.abc';
@@ -20,12 +16,12 @@ import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 
 import { App } from '../dto/app.dto';
 import { AppRepository } from '../storage/AppRepository';
-import { AppName } from '@waha/apps/app_sdk/apps/name';
 import { AppRuntimeConfig } from '@waha/apps/app_sdk/apps/AppRuntime';
 import {
   findDuplicateUniqueApp,
   isUniqueApp,
 } from '@waha/apps/app_sdk/apps/definition';
+import { GetApp } from '@waha/apps/app_sdk/apps/registry';
 
 export class AppDisableError extends UnprocessableEntityException {
   constructor(app: string) {
@@ -49,11 +45,7 @@ export class AppsEnabledService implements IAppsService {
   constructor(
     @InjectPinoLogger('AppsService')
     protected logger: PinoLogger,
-    @Optional() protected readonly chatwootService: ChatWootAppService,
-    @Optional() protected readonly callsAppService: CallsAppService,
-    @Optional() protected readonly mcpAppService: McpAppService,
-    @Optional()
-    protected readonly brazilianPhoneNumbersAppService: BrazilianPhoneNumbersAppService,
+    private readonly moduleRef: ModuleRef,
   ) {}
 
   async list(manager: SessionManager, session: string): Promise<App[]> {
@@ -281,17 +273,15 @@ export class AppsEnabledService implements IAppsService {
   }
 
   private getAppService(app: App): IAppService | null {
-    switch (app.app) {
-      case AppName.chatwoot:
-        return this.chatwootService;
-      case AppName.calls:
-        return this.callsAppService;
-      case AppName.mcp:
-        return this.mcpAppService;
-      case AppName.brazilianPhoneNumbers:
-        return this.brazilianPhoneNumbersAppService;
-      default:
-        throw new Error(`App '${app.app}' not supported`);
+    const appModule = GetApp(app.app);
+    if (!appModule) {
+      throw new Error(`App '${app.app}' not supported`);
+    }
+    try {
+      return this.moduleRef.get(appModule.Service, { strict: false });
+    } catch {
+      // Provider is not registered - app is disabled via WAHA_APPS_ON / WAHA_APPS_OFF
+      return null;
     }
   }
 

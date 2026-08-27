@@ -1,4 +1,7 @@
+import { AppModule } from '@waha/apps/app_sdk/apps/definition';
+import { AppName } from '@waha/apps/app_sdk/apps/name';
 import { RegisterAppQueue } from '@waha/apps/app_sdk/BullUtils';
+import { ChatWootAppConfig } from '@waha/apps/chatwoot/dto/config.dto';
 import {
   ExponentialRetriesJobOptions,
   JobRemoveOptions,
@@ -160,8 +163,22 @@ const PROVIDERS = [
   QueueManager,
 ];
 
-export const ChatWootExports = {
-  providers: PROVIDERS,
-  imports: IMPORTS,
-  controllers: CONTROLLERS,
+const ChatWootAppModule: AppModule = {
+  name: AppName.chatwoot,
+  definition: {
+    plainkey: true,
+    queue: true,
+    migrations: true,
+    restartOnChange: true,
+    unique: true,
+  },
+  nestjs: {
+    imports: IMPORTS,
+    controllers: CONTROLLERS,
+    providers: PROVIDERS,
+  },
+  Service: ChatWootAppService,
+  ConfigClass: ChatWootAppConfig,
 };
+
+export default ChatWootAppModule;
