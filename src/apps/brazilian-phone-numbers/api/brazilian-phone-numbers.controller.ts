@@ -113,13 +113,7 @@ export class BrazilianPhoneNumbersController {
     } catch {
       return;
     }
-    for (const [key, plugin] of Object.entries(session.plugins ?? {})) {
-      if (
-        key.endsWith(`:${app.id}`) &&
-        plugin instanceof BrazilianPhoneCorePlugin
-      ) {
-        plugin.clearMemoryCache();
-      }
-    }
+    const plugin = session.plugins.get(BrazilianPhoneCorePlugin, app.id);
+    plugin?.clearMemoryCache();
   }
 }

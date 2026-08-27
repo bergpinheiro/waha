@@ -58,6 +58,10 @@ const SEND_METHODS = new Set([
 // Confirmed-negative marker in the memory cache ('' is not a valid chat id).
 const NOT_FOUND = '';
 
+export interface BrazilianPhoneCorePluginDeps {
+  repository: BrazilianPhoneCacheRepository | null;
+}
+
 /**
  * Resolves Brazilian phone numbers into the chat id the account is actually
  * registered under (9th-digit ambiguity for DDD 31-99, static rule for
@@ -69,7 +73,10 @@ const NOT_FOUND = '';
  * 4. local contact / LID store (engine-specific subclasses) - no network
  * 5. WhatsApp lookup, single-flight so concurrent sends share one query
  */
-export class BrazilianPhoneCorePlugin extends SessionPlugin<BrazilianPhoneNumbersAppConfig> {
+export class BrazilianPhoneCorePlugin extends SessionPlugin<
+  BrazilianPhoneNumbersAppConfig,
+  BrazilianPhoneCorePluginDeps
+> {
   protected memory: NodeCache;
   // Single-flight guard: concurrent first-time resolutions of the same number
   // share one in-flight WhatsApp lookup instead of each firing its own query.
@@ -79,9 +86,9 @@ export class BrazilianPhoneCorePlugin extends SessionPlugin<BrazilianPhoneNumber
     session: WhatsappSession,
     logger: Logger,
     config: BrazilianPhoneNumbersAppConfig,
-    protected readonly repository: BrazilianPhoneCacheRepository | null,
+    deps: BrazilianPhoneCorePluginDeps,
   ) {
-    super(session, logger, config);
+    super(session, logger, config, deps);
     const memoryTtlMs =
       parseDurationMs(config?.cache?.memoryTtl) ?? ms(DEFAULT_MEMORY_TTL);
     this.memory = new NodeCache({
@@ -319,12 +326,12 @@ export class BrazilianPhoneCorePlugin extends SessionPlugin<BrazilianPhoneNumber
   // Verified resolution: memory plus the database tier (when enabled).
   private async cacheResolved(digits: string, chatId: string): Promise<void> {
     this.cacheInMemory(digits, chatId);
-    if (!this.repository) {
+    if (!this.deps.repository) {
       return;
     }
     try {
       const keys = getBrazilPhoneCacheKeys(digits);
-      await this.repository.setMany(keys, chatId, true, new Date());
+      await this.deps.repository.setMany(keys, chatId, true, new Date());
     } catch (error) {
       this.logger.warn(
         `Failed to persist BR phone resolution for '${digits}': ${error}`,
@@ -333,11 +340,11 @@ export class BrazilianPhoneCorePlugin extends SessionPlugin<BrazilianPhoneNumber
   }
 
   private async getFromDb(digits: string): Promise<string | null> {
-    if (!this.repository) {
+    if (!this.deps.repository) {
       return null;
     }
     try {
-      const entry = await this.repository.get(digits);
+      const entry = await this.deps.repository.get(digits);
       return entry?.chatId ?? null;
     } catch (error) {
       this.logger.warn(

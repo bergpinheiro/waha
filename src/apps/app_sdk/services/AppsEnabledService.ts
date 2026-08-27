@@ -232,9 +232,8 @@ export class AppsEnabledService implements IAppsService {
         throw new AppDisableError(app.app);
       }
       const plugins = service.plugins(app, session, store);
-      for (const plugin of plugins) {
-        const key = `${plugin.constructor.name}:${app.id}`;
-        session.plugins[key] = plugin;
+      for (const options of plugins) {
+        session.plugins.add(options, app.id);
       }
       service.beforeSessionStart(app, session);
     }

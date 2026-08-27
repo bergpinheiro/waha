@@ -22,7 +22,7 @@ export class WebhookPlugin extends SessionPlugin<WebhookPluginConfig> {
     logger: Logger,
     config: WebhookPluginConfig,
   ) {
-    super(session, logger, config);
+    super(session, logger, config, null);
     for (const webhookConfig of config.webhooks) {
       this.configureSingleWebhook(session, webhookConfig);
     }

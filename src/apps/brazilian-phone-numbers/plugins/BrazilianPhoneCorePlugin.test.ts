@@ -51,12 +51,9 @@ interface BuildOptions {
 function buildPlugin(options: BuildOptions = {}) {
   const session = buildSession();
   const PluginClass = options.pluginClass ?? BrazilianPhoneCorePlugin;
-  const plugin = new PluginClass(
-    session,
-    logger,
-    buildConfig(options.config),
-    options.repository ?? null,
-  );
+  const plugin = new PluginClass(session, logger, buildConfig(options.config), {
+    repository: options.repository ?? null,
+  });
   RegisterPluginHooks(plugin);
   return { session: session, plugin: plugin };
 }

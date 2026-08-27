@@ -54,7 +54,7 @@ export function PluginEvent(event: WAHAEvents) {
 /**
  * Calls all @PluginEvent methods of the plugin's class with the session event observables.
  */
-export function RegisterPluginEvents(plugin: SessionPlugin<any>) {
+export function RegisterPluginEvents(plugin: SessionPlugin<any, any>) {
   for (const meta of collectEventSubscriptions(plugin.constructor)) {
     const method = (plugin as any)[meta.propertyKey].bind(plugin);
     method(plugin.session.getEventObservable(meta.event));

@@ -114,7 +114,7 @@ export function PluginHook<H extends TapableHook>(
 /**
  * Applies all @PluginHook taps of the plugin's class to its session hooks, named after the plugin class.
  */
-export function RegisterPluginHooks(plugin: SessionPlugin<any>) {
+export function RegisterPluginHooks(plugin: SessionPlugin<any, any>) {
   for (const meta of collectHookTaps(plugin.constructor)) {
     const hook: any = meta.selector(plugin.session.hooks);
     const { type, ...tapOptions } = meta.options ?? {};

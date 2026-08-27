@@ -320,10 +320,7 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
 
   public constructor(config) {
     super(config);
-    this.plugins[WidToJIDPlugin.name] = new WidToJIDPlugin(
-      this,
-      this.loggerBuilder.child({ plugin: WidToJIDPlugin.name }),
-    );
+    this.plugins.add(WidToJIDPlugin.with(null, null));
     this.shouldRestart = true;
 
     this.qr = new QR();

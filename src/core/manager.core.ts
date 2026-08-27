@@ -69,9 +69,6 @@ import {
 } from '../structures/sessions.dto';
 import { WebhookConfig } from '../structures/webhooks.config.dto';
 import { populateSessionInfo, SessionManager } from './abc/manager.abc';
-import type { SessionPlugin } from '@waha/core/abc/session.plugin';
-import { RegisterPluginEvents } from '@waha/core/abc/session.plugin.events';
-import { RegisterPluginHooks } from '@waha/core/abc/session.plugin.hooks';
 
 import { SessionParams, WhatsappSession } from './abc/session.abc';
 import { EngineConfigService } from './config/EngineConfigService';
@@ -388,44 +385,17 @@ export class SessionManagerCore
     this.updateSessions();
 
     // Plugins
-    {
-      const logger = loggerBuilder.child({
-        plugin: SessionRuntimeInfoPlugin.name,
-      });
-      session.plugins[SessionRuntimeInfoPlugin.name] =
-        new SessionRuntimeInfoPlugin(session, logger);
-    }
-    {
-      const webhooks = this.getWebhooks(config);
-      const logger = loggerBuilder.child({ plugin: WebhookPlugin.name });
-      session.plugins[WebhookPlugin.name] = new WebhookPlugin(session, logger, {
-        webhooks: webhooks,
-      });
-    }
+    const webhooks = this.getWebhooks(config);
+    session.plugins.add(SessionRuntimeInfoPlugin.with(null, null));
+    session.plugins.add(WebhookPlugin.with({ webhooks: webhooks }, null));
+    session.plugins.add(MessageSourceCachePlugin.with(null, null));
+    session.plugins.add(WidEnsureSuffixPlugin.with(null, null));
     if (PRESENCE_AUTO_ONLINE) {
-      const config = {
-        duration: PRESENCE_AUTO_ONLINE_DURATION_SECONDS * 1000,
-      };
-      const logger = loggerBuilder.child({
-        plugin: MaintainOnlineStatusPlugin.name,
-      });
-      session.plugins[MaintainOnlineStatusPlugin.name] =
-        new MaintainOnlineStatusPlugin(session, logger, config);
-    }
-    {
-      const logger = loggerBuilder.child({
-        plugin: MessageSourceCachePlugin.name,
-      });
-      session.plugins[MessageSourceCachePlugin.name] =
-        new MessageSourceCachePlugin(session, logger);
-    }
-    {
-      const logger = loggerBuilder.child({
-        plugin: WidEnsureSuffixPlugin.name,
-      });
-      session.plugins[WidEnsureSuffixPlugin.name] = new WidEnsureSuffixPlugin(
-        session,
-        logger,
+      session.plugins.add(
+        MaintainOnlineStatusPlugin.with(
+          { duration: PRESENCE_AUTO_ONLINE_DURATION_SECONDS * 1000 },
+          null,
+        ),
       );
     }
     // Apps (may contribute their own plugins to the session)
@@ -436,11 +406,7 @@ export class SessionManagerCore
       session.status = WAHASessionStatus.FAILED;
     }
 
-    const plugins: SessionPlugin<any>[] = Object.values(session.plugins);
-    for (const plugin of plugins) {
-      RegisterPluginHooks(plugin);
-      RegisterPluginEvents(plugin);
-    }
+    session.plugins.attach();
 
     // start session
     if (session.status !== WAHASessionStatus.FAILED) {

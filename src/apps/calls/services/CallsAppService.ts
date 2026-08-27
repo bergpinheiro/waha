@@ -1,11 +1,11 @@
 import { Injectable } from '@nestjs/common';
 import { App } from '@waha/apps/app_sdk/dto/app.dto';
 import { IAppService } from '@waha/apps/app_sdk/services/IAppService';
+import { PluginOptions } from '@waha/core/abc/session.plugin';
 import { CallsAppConfig } from '@waha/apps/calls/dto/config.dto';
 import { CallsPlugin } from '@waha/apps/calls/services/CallsPlugin';
 import { SessionManager } from '@waha/core/abc/manager.abc';
 import { WhatsappSession } from '@waha/core/abc/session.abc';
-import { SessionPlugin } from '@waha/core/abc/session.plugin';
 
 @Injectable()
 export class CallsAppService implements IAppService {
@@ -82,16 +82,9 @@ export class CallsAppService implements IAppService {
     void app;
   }
 
-  plugins(
-    app: App<CallsAppConfig>,
-    session: WhatsappSession,
-  ): SessionPlugin<any>[] {
-    const logger = session.loggerBuilder.child({
-      plugin: CallsPlugin.name,
-      app: app.app,
-    });
-    const plugin = new CallsPlugin(session, logger, app.config);
-    return [plugin];
+  plugins(app: App<CallsAppConfig>, session: WhatsappSession): PluginOptions[] {
+    void session;
+    return [CallsPlugin.with(app.config, null)];
   }
 
   beforeSessionStart(app: App<CallsAppConfig>, session: WhatsappSession): void {

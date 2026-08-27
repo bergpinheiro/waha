@@ -1,7 +1,7 @@
 import { MessageCappingTracker } from '@waha/core/abc/MessageCappingTracker';
 import { ReachoutTimelockTracker } from '@waha/core/abc/ReachoutTimelockTracker';
 import { getBrowserExecutablePath as getBrowserExecutablePathAutodetect } from '@waha/core/abc/session.browser';
-import type { SessionPlugin } from '@waha/core/abc/session.plugin';
+import { PluginRegistry } from '@waha/core/abc/session.plugin.registry';
 import { IMediaConverter } from '@waha/core/media/IConverter';
 import { Ffmpeg } from '@waha/core/utils/ffmpeg';
 import { MessagesForRead } from '@waha/core/utils/convertors';
@@ -227,7 +227,7 @@ export abstract class WhatsappSession {
 
   public mediaConverter: IMediaConverter;
   public hooks: SessionHooks;
-  public plugins: Record<string, SessionPlugin<any>> = {};
+  public plugins: PluginRegistry;
 
   public constructor({
     name,
@@ -248,6 +248,7 @@ export abstract class WhatsappSession {
     this.loggerBuilder = loggerBuilder;
     this.logger = loggerBuilder.child({ name: 'WhatsappSession' });
     this.hooks = new SessionHooks();
+    this.plugins = new PluginRegistry(this);
 
     this.mediaConverter = new Ffmpeg(this.name, this.logger);
     this.reachoutTimelock = new ReachoutTimelockTracker(this.logger);

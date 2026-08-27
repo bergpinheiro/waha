@@ -1,5 +1,6 @@
 import { Injectable, UnprocessableEntityException } from '@nestjs/common';
 import { IAppService } from '@waha/apps/app_sdk/services/IAppService';
+import { PluginOptions } from '@waha/core/abc/session.plugin';
 import { CacheForConfig } from '@waha/apps/chatwoot/cache/ConversationCache';
 import { CHATWOOT_CUSTOM_ATTRIBUTES } from '@waha/apps/chatwoot/const';
 import { ChatWootAppConfig } from '@waha/apps/chatwoot/dto/config.dto';
@@ -8,7 +9,6 @@ import { ChatWootWAHAQueueService } from '@waha/apps/chatwoot/services/ChatWootW
 import { App } from '@waha/apps/chatwoot/storage';
 import { SessionManager } from '@waha/core/abc/manager.abc';
 import { WhatsappSession } from '@waha/core/abc/session.abc';
-import { SessionPlugin } from '@waha/core/abc/session.plugin';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 
 import { DIContainer } from '../di/DIContainer';
@@ -156,7 +156,7 @@ export class ChatWootAppService implements IAppService {
   plugins(
     app: App<ChatWootAppConfig>,
     session: WhatsappSession,
-  ): SessionPlugin<any>[] {
+  ): PluginOptions[] {
     void app;
     void session;
     return [];

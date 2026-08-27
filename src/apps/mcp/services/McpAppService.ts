@@ -1,12 +1,12 @@
 import { Injectable, UnprocessableEntityException } from '@nestjs/common';
 import { App } from '@waha/apps/app_sdk/dto/app.dto';
 import { IAppService } from '@waha/apps/app_sdk/services/IAppService';
+import { PluginOptions } from '@waha/core/abc/session.plugin';
 import { AppRepository } from '@waha/apps/app_sdk/storage/AppRepository';
 import { McpAppConfig } from '@waha/apps/mcp/dto/config.dto';
 import { SessionManager } from '@waha/core/abc/manager.abc';
 import { ApiKeyService } from '@waha/core/services/ApiKeyService';
 import { WhatsappSession } from '@waha/core/abc/session.abc';
-import { SessionPlugin } from '@waha/core/abc/session.plugin';
 import { InjectPinoLogger, PinoLogger } from 'nestjs-pino';
 
 @Injectable()
@@ -115,10 +115,7 @@ export class McpAppService implements IAppService {
     app.config = { ...(app.config ?? {}), key: keyDto.key } as McpAppConfig;
   }
 
-  plugins(
-    app: App<McpAppConfig>,
-    session: WhatsappSession,
-  ): SessionPlugin<any>[] {
+  plugins(app: App<McpAppConfig>, session: WhatsappSession): PluginOptions[] {
     void app;
     void session;
     return [];

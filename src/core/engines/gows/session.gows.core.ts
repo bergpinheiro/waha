@@ -301,10 +301,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
 
   public constructor(config) {
     super(config);
-    this.plugins[WidToJIDPlugin.name] = new WidToJIDPlugin(
-      this,
-      this.loggerBuilder.child({ plugin: WidToJIDPlugin.name }),
-    );
+    this.plugins.add(WidToJIDPlugin.with(null, null));
     this.qr = new QR();
     this.session = new messages.Session({ id: this.name });
     this.presences = new NodeCache({

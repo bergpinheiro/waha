@@ -2,7 +2,7 @@ import { App } from '@waha/apps/app_sdk/dto/app.dto';
 import { DataStore } from '@waha/core/abc/DataStore';
 import { SessionManager } from '@waha/core/abc/manager.abc';
 import { WhatsappSession } from '@waha/core/abc/session.abc';
-import { SessionPlugin } from '@waha/core/abc/session.plugin';
+import { PluginOptions } from '@waha/core/abc/session.plugin';
 
 /**
  * Exact App service
@@ -57,15 +57,15 @@ export interface IAppService {
   enrich(manager: SessionManager, app: App): Promise<void>;
 
   /**
-   * Session plugins contributed by this app.
-   * The session manager registers their hooks and events before session.start().
+   * Session plugins contributed by this app. AppsEnabledService registers them with the app id,
+   * and the session manager attaches their hooks and events before session.start().
    * store - the server data store, for apps whose plugins persist data.
    */
   plugins(
     app: App,
     session: WhatsappSession,
     store?: DataStore,
-  ): SessionPlugin<any>[];
+  ): PluginOptions[];
 
   beforeSessionStart(app: App, session: WhatsappSession): void;
 

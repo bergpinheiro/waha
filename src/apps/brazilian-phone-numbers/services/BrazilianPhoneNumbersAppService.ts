@@ -9,11 +9,11 @@ import { BrazilianPhoneCorePlugin } from '@waha/apps/brazilian-phone-numbers/plu
 import { BrazilianPhoneCacheRepository } from '@waha/apps/brazilian-phone-numbers/storage/BrazilianPhoneCacheRepository';
 import { App } from '@waha/apps/app_sdk/dto/app.dto';
 import { IAppService } from '@waha/apps/app_sdk/services/IAppService';
+import { PluginOptions } from '@waha/core/abc/session.plugin';
 import { AppDB } from '@waha/apps/app_sdk/storage/types';
 import { DataStore } from '@waha/core/abc/DataStore';
 import { SessionManager } from '@waha/core/abc/manager.abc';
 import { WhatsappSession } from '@waha/core/abc/session.abc';
-import { SessionPlugin } from '@waha/core/abc/session.plugin';
 import { parseDurationMs } from '@waha/nestjs/validation/IsDuration';
 import { WAHAEngine } from '@waha/structures/enums.dto';
 import * as ms from 'ms';
@@ -105,7 +105,7 @@ export class BrazilianPhoneNumbersAppService implements IAppService {
     app: App<BrazilianPhoneNumbersAppConfig>,
     session: WhatsappSession,
     store?: DataStore,
-  ): SessionPlugin<any>[] {
+  ): PluginOptions[] {
     const config = app.config ?? new BrazilianPhoneNumbersAppConfig();
     let repository: BrazilianPhoneCacheRepository | null = null;
     const persistent = config.cache?.persistent ?? true;
@@ -121,17 +121,7 @@ export class BrazilianPhoneNumbersAppService implements IAppService {
       );
     }
     const BrazilianPhonePlugin = PLUGINS[session.engine];
-    const logger = session.loggerBuilder.child({
-      plugin: BrazilianPhonePlugin.name,
-      app: app.app,
-    });
-    const plugin = new BrazilianPhonePlugin(
-      session,
-      logger,
-      config,
-      repository,
-    );
-    return [plugin];
+    return [BrazilianPhonePlugin.with(config, { repository: repository })];
   }
 
   beforeSessionStart(
