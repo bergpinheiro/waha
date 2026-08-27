@@ -1,3 +1,4 @@
+import { BrazilianPhoneNumbersAppConfig } from '@waha/apps/brazilian-phone-numbers/dto/config.dto';
 import { ChatWootAppConfig } from '@waha/apps/chatwoot/dto/config.dto';
 import { CallsAppConfig } from '@waha/apps/calls/dto/config.dto';
 import { McpAppConfig } from '@waha/apps/mcp/dto/config.dto';
@@ -15,9 +16,15 @@ import { AppName } from '@waha/apps/app_sdk/apps/name';
 export type AllowedAppConfig =
   | ChatWootAppConfig
   | CallsAppConfig
-  | McpAppConfig;
+  | McpAppConfig
+  | BrazilianPhoneNumbersAppConfig;
 
-@ApiExtraModels(ChatWootAppConfig, CallsAppConfig, McpAppConfig)
+@ApiExtraModels(
+  ChatWootAppConfig,
+  CallsAppConfig,
+  McpAppConfig,
+  BrazilianPhoneNumbersAppConfig,
+)
 export class App<T extends AllowedAppConfig = any> {
   @IsString()
   id: string;
@@ -49,6 +56,8 @@ export class App<T extends AllowedAppConfig = any> {
           return CallsAppConfig;
         case AppName.mcp:
           return McpAppConfig;
+        case AppName.brazilianPhoneNumbers:
+          return BrazilianPhoneNumbersAppConfig;
         default:
           return Object;
       }
@@ -73,4 +82,13 @@ export class McpAppDto extends App<McpAppConfig> {
   config: McpAppConfig;
 }
 
-export type AppDto = ChatWootAppDto | CallsAppDto | McpAppDto;
+export class BrazilianPhoneNumbersAppDto extends App<BrazilianPhoneNumbersAppConfig> {
+  @Type(() => BrazilianPhoneNumbersAppConfig)
+  config: BrazilianPhoneNumbersAppConfig;
+}
+
+export type AppDto =
+  | ChatWootAppDto
+  | CallsAppDto
+  | McpAppDto
+  | BrazilianPhoneNumbersAppDto;

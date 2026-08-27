@@ -7,6 +7,7 @@ import {
 import { migrate } from '@waha/apps/app_sdk/migrations';
 import { IAppService } from '@waha/apps/app_sdk/services/IAppService';
 import { IAppsService } from '@waha/apps/app_sdk/services/IAppsService';
+import { BrazilianPhoneNumbersAppService } from '@waha/apps/brazilian-phone-numbers/services/BrazilianPhoneNumbersAppService';
 import { ChatWootAppService } from '@waha/apps/chatwoot/services/ChatWootAppService';
 import { CallsAppService } from '@waha/apps/calls/services/CallsAppService';
 import { McpAppService } from '@waha/apps/mcp/services/McpAppService';
@@ -38,6 +39,8 @@ export class AppsEnabledService implements IAppsService {
     @Optional() protected readonly chatwootService: ChatWootAppService,
     @Optional() protected readonly callsAppService: CallsAppService,
     @Optional() protected readonly mcpAppService: McpAppService,
+    @Optional()
+    protected readonly brazilianPhoneNumbersAppService: BrazilianPhoneNumbersAppService,
   ) {}
 
   async list(manager: SessionManager, session: string): Promise<App[]> {
@@ -65,7 +68,11 @@ export class AppsEnabledService implements IAppsService {
     }
 
     let existingApps: App[] = [];
-    if (app.app === AppName.chatwoot || app.app === AppName.calls) {
+    if (
+      app.app === AppName.chatwoot ||
+      app.app === AppName.calls ||
+      app.app === AppName.brazilianPhoneNumbers
+    ) {
       existingApps = await repo.getAllBySession(app.session);
     }
     // Validate only one Chatwoot app per session
@@ -89,6 +96,18 @@ export class AppsEnabledService implements IAppsService {
       if (existingCallsApp) {
         throw new Error(
           `Only one Calls app is allowed per session. Session '${app.session}' already has a Calls app with ID '${existingCallsApp.id}'.`,
+        );
+      }
+    }
+    // Validate only one Brazilian Phone Numbers app per session
+    if (app.app === AppName.brazilianPhoneNumbers) {
+      const existingBrazilianPhoneNumbersApp = existingApps.find(
+        (existingApp) => existingApp.app === AppName.brazilianPhoneNumbers,
+      );
+
+      if (existingBrazilianPhoneNumbersApp) {
+        throw new Error(
+          `Only one Brazilian Phone Numbers app is allowed per session. Session '${app.session}' already has a Brazilian Phone Numbers app with ID '${existingBrazilianPhoneNumbersApp.id}'.`,
         );
       }
     }
@@ -212,7 +231,7 @@ export class AppsEnabledService implements IAppsService {
       if (!service && !AppRuntimeConfig.HasApp(app.app)) {
         throw new AppDisableError(app.app);
       }
-      const plugins = service.plugins(app, session);
+      const plugins = service.plugins(app, session, store);
       for (const plugin of plugins) {
         const key = `${plugin.constructor.name}:${app.id}`;
         session.plugins[key] = plugin;
@@ -278,6 +297,8 @@ export class AppsEnabledService implements IAppsService {
         return this.callsAppService;
       case AppName.mcp:
         return this.mcpAppService;
+      case AppName.brazilianPhoneNumbers:
+        return this.brazilianPhoneNumbersAppService;
       default:
         throw new Error(`App '${app.app}' not supported`);
     }

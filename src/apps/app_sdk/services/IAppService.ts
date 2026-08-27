@@ -1,4 +1,5 @@
 import { App } from '@waha/apps/app_sdk/dto/app.dto';
+import { DataStore } from '@waha/core/abc/DataStore';
 import { SessionManager } from '@waha/core/abc/manager.abc';
 import { WhatsappSession } from '@waha/core/abc/session.abc';
 import { SessionPlugin } from '@waha/core/abc/session.plugin';
@@ -58,8 +59,13 @@ export interface IAppService {
   /**
    * Session plugins contributed by this app.
    * The session manager registers their hooks and events before session.start().
+   * store - the server data store, for apps whose plugins persist data.
    */
-  plugins(app: App, session: WhatsappSession): SessionPlugin<any>[];
+  plugins(
+    app: App,
+    session: WhatsappSession,
+    store?: DataStore,
+  ): SessionPlugin<any>[];
 
   beforeSessionStart(app: App, session: WhatsappSession): void;
 

@@ -4,6 +4,7 @@ import { RMutexModule } from '@waha/modules/rmutex';
 import { BullBoardModule } from '@bull-board/nestjs';
 import { ExpressAdapter } from '@bull-board/express';
 import { BullAuthMiddleware } from '@waha/apps/app_sdk/auth';
+import { BrazilianPhoneNumbersAppExports } from '@waha/apps/brazilian-phone-numbers/brazilian-phone-numbers.module';
 import { ChatWootExports } from '@waha/apps/chatwoot/chatwoot.module';
 import { McpModuleExports } from '@waha/apps/mcp/mcp.module';
 import { AppsController } from '@waha/apps/app_sdk/api/apps.controller';
@@ -86,6 +87,8 @@ function getAppModule(name: AppName) {
       return ChatWootExports;
     case AppName.mcp:
       return McpModuleExports;
+    case AppName.brazilianPhoneNumbers:
+      return BrazilianPhoneNumbersAppExports;
     default:
       throw Error(`App module not found for ${name}`);
   }
@@ -97,12 +100,14 @@ export const AppsEnabled = {
     ...getAppModule(AppName.mcp).imports,
     ...getAppModule(AppName.chatwoot).imports,
     ...getAppModule(AppName.calls).imports,
+    ...getAppModule(AppName.brazilianPhoneNumbers).imports,
   ],
   controllers: [
     AppsController,
     ...getAppModule(AppName.mcp).controllers,
     ...getAppModule(AppName.chatwoot).controllers,
     ...getAppModule(AppName.calls).controllers,
+    ...getAppModule(AppName.brazilianPhoneNumbers).controllers,
   ],
   providers: [
     {
@@ -112,6 +117,7 @@ export const AppsEnabled = {
     ...getAppModule(AppName.mcp).providers,
     ...getAppModule(AppName.calls).providers,
     ...getAppModule(AppName.chatwoot).providers,
+    ...getAppModule(AppName.brazilianPhoneNumbers).providers,
   ],
 };
 

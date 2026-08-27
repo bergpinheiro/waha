@@ -36,4 +36,11 @@ export const APPS: Record<AppName, AppDefinition> = {
     migrations: false,
     restartOnChange: false,
   },
+  [AppName.brazilianPhoneNumbers]: {
+    name: AppName.brazilianPhoneNumbers,
+    plainkey: false,
+    queue: false,
+    migrations: true,
+    restartOnChange: true,
+  },
 };
