@@ -238,7 +238,7 @@ import { NowebClient } from './NowebClient';
 import { INowebStore } from './store/INowebStore';
 import { NowebPersistentStore } from './store/NowebPersistentStore';
 import { NowebStorageFactoryCore } from './store/NowebStorageFactoryCore';
-import { ensureNumber, extractMediaContent } from './utils';
+import { buildMessageId, ensureNumber, extractMediaContent } from './utils';
 import { Agents } from '@waha/core/engines/noweb/types';
 import {
   IsEditedMessage,
@@ -3784,25 +3784,6 @@ export class NOWEBEngineMediaProcessor implements IMediaEngineProcessor<any> {
 }
 
 export const ALL_JID = 'all@s.whatsapp.net';
-
-/**
- * Build WAHA message id from engine one
- * {id: "AAA", remoteJid: "11111111111@s.whatsapp.net", "fromMe": false}
- * false_11111111111@c.us_AA
- */
-export function buildMessageId({
-  id,
-  remoteJid,
-  fromMe,
-  participant,
-}: WAMessageKey) {
-  const chatId = toCusFormat(remoteJid);
-  const parts = [fromMe || false, chatId, id];
-  if (participant) {
-    parts.push(toCusFormat(participant));
-  }
-  return parts.join('_');
-}
 
 function getId(object) {
   return object.id;
