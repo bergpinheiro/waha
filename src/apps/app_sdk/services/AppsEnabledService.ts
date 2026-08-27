@@ -22,11 +22,24 @@ import { App } from '../dto/app.dto';
 import { AppRepository } from '../storage/AppRepository';
 import { AppName } from '@waha/apps/app_sdk/apps/name';
 import { AppRuntimeConfig } from '@waha/apps/app_sdk/apps/AppRuntime';
+import {
+  findDuplicateUniqueApp,
+  isUniqueApp,
+} from '@waha/apps/app_sdk/apps/definition';
 
 export class AppDisableError extends UnprocessableEntityException {
   constructor(app: string) {
     super(
       `App '${app}' is disabled in runtime configuration - adjust WAHA_APPS_ON / WAHA_APPS_OFF environment variables to enable it.`,
+    );
+  }
+}
+
+export class AppUniquePerSessionError extends UnprocessableEntityException {
+  constructor(app: string, session: string, existingAppId: string) {
+    super(
+      `Only one '${app}' app is allowed per session. ` +
+        `Session '${session}' already has a '${app}' app with ID '${existingAppId}'.`,
     );
   }
 }
@@ -67,47 +80,17 @@ export class AppsEnabledService implements IAppsService {
       throw new Error(`App with ID '${app.id}' already exists.`);
     }
 
-    let existingApps: App[] = [];
-    if (
-      app.app === AppName.chatwoot ||
-      app.app === AppName.calls ||
-      app.app === AppName.brazilianPhoneNumbers
-    ) {
-      existingApps = await repo.getAllBySession(app.session);
-    }
-    // Validate only one Chatwoot app per session
-    if (app.app === AppName.chatwoot) {
-      const existingChatwootApp = existingApps.find(
-        (existingApp) => existingApp.app === AppName.chatwoot,
+    // Validate only one instance of a unique app per session
+    if (isUniqueApp(app.app)) {
+      const existingApps = await repo.getAllBySession(app.session);
+      const duplicateApp = existingApps.find(
+        (existingApp) => existingApp.app === app.app,
       );
-
-      if (existingChatwootApp) {
-        throw new Error(
-          `Only one Chatwoot app is allowed per session. Session '${app.session}' already has a Chatwoot app with ID '${existingChatwootApp.id}'.`,
-        );
-      }
-    }
-    // Validate only one Calls app per session
-    if (app.app === AppName.calls) {
-      const existingCallsApp = existingApps.find(
-        (existingApp) => existingApp.app === AppName.calls,
-      );
-
-      if (existingCallsApp) {
-        throw new Error(
-          `Only one Calls app is allowed per session. Session '${app.session}' already has a Calls app with ID '${existingCallsApp.id}'.`,
-        );
-      }
-    }
-    // Validate only one Brazilian Phone Numbers app per session
-    if (app.app === AppName.brazilianPhoneNumbers) {
-      const existingBrazilianPhoneNumbersApp = existingApps.find(
-        (existingApp) => existingApp.app === AppName.brazilianPhoneNumbers,
-      );
-
-      if (existingBrazilianPhoneNumbersApp) {
-        throw new Error(
-          `Only one Brazilian Phone Numbers app is allowed per session. Session '${app.session}' already has a Brazilian Phone Numbers app with ID '${existingBrazilianPhoneNumbersApp.id}'.`,
+      if (duplicateApp) {
+        throw new AppUniquePerSessionError(
+          app.app,
+          app.session,
+          duplicateApp.id,
         );
       }
     }
@@ -257,6 +240,15 @@ export class AppsEnabledService implements IAppsService {
     session: string,
     apps: App[],
   ): Promise<void> {
+    // Reject duplicate unique apps in the payload before any writes,
+    // otherwise the by-type matching below binds them to the same app
+    const duplicateUniqueApp = findDuplicateUniqueApp(apps);
+    if (duplicateUniqueApp !== null) {
+      throw new UnprocessableEntityException(
+        `Only one '${duplicateUniqueApp}' app is allowed per session - remove duplicate entries from 'apps'.`,
+      );
+    }
+
     const existing = await this.list(manager, session);
     const ids = new Set<string>();
 
