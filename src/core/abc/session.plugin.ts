@@ -41,6 +41,11 @@ export abstract class SessionPlugin<Config = null, Deps = null> {
   ) {}
 
   /**
+   * Override for custom wiring (event subscriptions, extra hooks); keep constructors construction-only.
+   */
+  attach(): void {}
+
+  /**
    * Bind config and deps to the plugin class, type-checked against its constructor.
    * Whoever registers the plugin supplies session and logger.
    */

@@ -55,12 +55,14 @@ export class PluginRegistry {
   }
 
   /**
-   * Register @PluginHook and @PluginEvent handlers for all plugins. Deferred until all plugins (core, engine, apps) are added.
+   * Register @PluginHook and @PluginEvent handlers for all plugins and run their attach().
+   * Deferred until all plugins (core, engine, apps) are added.
    */
   attach(): void {
     for (const entry of this.entries) {
       RegisterPluginHooks(entry.plugin);
       RegisterPluginEvents(entry.plugin);
+      entry.plugin.attach();
     }
   }
 }

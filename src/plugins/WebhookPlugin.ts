@@ -1,11 +1,9 @@
 import { populateSessionInfo } from '@waha/core/abc/manager.abc';
-import { WhatsappSession } from '@waha/core/abc/session.abc';
 import { SessionPlugin } from '@waha/core/abc/session.plugin';
 import { WebhookSender } from '@waha/plugins/WebhookPlugin.sender';
 import { WAHAEvents, WAHAEventsWild } from '@waha/structures/enums.dto';
 import { WebhookConfig } from '@waha/structures/webhooks.config.dto';
 import { EventWildUnmask } from '@waha/utils/events';
-import { Logger } from 'pino';
 
 export class WebhookPluginConfig {
   webhooks: WebhookConfig[];
@@ -17,14 +15,9 @@ export class WebhookPluginConfig {
 export class WebhookPlugin extends SessionPlugin<WebhookPluginConfig> {
   private eventUnmask = new EventWildUnmask(WAHAEvents, WAHAEventsWild);
 
-  constructor(
-    session: WhatsappSession,
-    logger: Logger,
-    config: WebhookPluginConfig,
-  ) {
-    super(session, logger, config, null);
-    for (const webhookConfig of config.webhooks) {
-      this.configureSingleWebhook(session, webhookConfig);
+  attach(): void {
+    for (const webhookConfig of this.config.webhooks) {
+      this.configure(webhookConfig);
     }
   }
 
@@ -32,10 +25,7 @@ export class WebhookPlugin extends SessionPlugin<WebhookPluginConfig> {
     return this.eventUnmask.unmask(events);
   }
 
-  private configureSingleWebhook(
-    session: WhatsappSession,
-    webhook: WebhookConfig,
-  ) {
+  private configure(webhook: WebhookConfig) {
     if (!webhook || !webhook.url || webhook.events.length === 0) {
       return;
     }
@@ -45,10 +35,10 @@ export class WebhookPlugin extends SessionPlugin<WebhookPluginConfig> {
     const events = this.getSuitableEvents(webhook.events);
     const sender = new WebhookSender(this.logger, webhook);
     for (const event of events) {
-      const obs$ = session.getEventObservable(event);
+      const obs$ = this.session.getEventObservable(event);
       obs$.subscribe((payload) => {
         setImmediate(() => {
-          const data = populateSessionInfo(event, session)(payload);
+          const data = populateSessionInfo(event, this.session)(payload);
           sender.send(data);
         });
       });
