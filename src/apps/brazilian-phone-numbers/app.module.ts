@@ -1,7 +1,6 @@
 import { AppModule } from '@waha/apps/app_sdk/apps/definition';
-import { AppName } from '@waha/apps/app_sdk/apps/name';
+import { AppName } from '@waha/apps/app_sdk/apps/apps';
 import { BrazilianPhoneNumbersController } from '@waha/apps/brazilian-phone-numbers/api/brazilian-phone-numbers.controller';
-import { BrazilianPhoneNumbersAppConfig } from '@waha/apps/brazilian-phone-numbers/dto/config.dto';
 import { BrazilianPhoneNumbersAppService } from '@waha/apps/brazilian-phone-numbers/services/BrazilianPhoneNumbersAppService';
 
 const BrazilianPhoneNumbersAppModule: AppModule = {
@@ -19,7 +18,6 @@ const BrazilianPhoneNumbersAppModule: AppModule = {
     providers: [BrazilianPhoneNumbersAppService],
   },
   Service: BrazilianPhoneNumbersAppService,
-  ConfigClass: BrazilianPhoneNumbersAppConfig,
 };
 
 export default BrazilianPhoneNumbersAppModule;

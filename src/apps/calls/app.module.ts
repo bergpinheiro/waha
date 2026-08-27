@@ -1,6 +1,5 @@
 import { AppModule } from '@waha/apps/app_sdk/apps/definition';
-import { AppName } from '@waha/apps/app_sdk/apps/name';
-import { CallsAppConfig } from '@waha/apps/calls/dto/config.dto';
+import { AppName } from '@waha/apps/app_sdk/apps/apps';
 import { CallsAppService } from '@waha/apps/calls/services/CallsAppService';
 
 const CallsAppModule: AppModule = {
@@ -18,7 +17,6 @@ const CallsAppModule: AppModule = {
     providers: [CallsAppService],
   },
   Service: CallsAppService,
-  ConfigClass: CallsAppConfig,
 };
 
 export default CallsAppModule;

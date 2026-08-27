@@ -22,7 +22,7 @@ import {
 } from '@waha/apps/brazilian-phone-numbers/dto/config.dto';
 import { BrazilianPhoneCorePlugin } from '@waha/apps/brazilian-phone-numbers/plugins/BrazilianPhoneCorePlugin';
 import { BrazilianPhoneCacheRepository } from '@waha/apps/brazilian-phone-numbers/storage/BrazilianPhoneCacheRepository';
-import { AppName } from '@waha/apps/app_sdk/apps/name';
+import { AppName } from '@waha/apps/app_sdk/apps/apps';
 import { AppRepository } from '@waha/apps/app_sdk/storage/AppRepository';
 import { AppDB } from '@waha/apps/app_sdk/storage/types';
 import { SessionManager } from '@waha/core/abc/manager.abc';

@@ -1,7 +1,6 @@
 import { AppModule } from '@waha/apps/app_sdk/apps/definition';
-import { AppName } from '@waha/apps/app_sdk/apps/name';
+import { AppName } from '@waha/apps/app_sdk/apps/apps';
 import { RegisterAppQueue } from '@waha/apps/app_sdk/BullUtils';
-import { ChatWootAppConfig } from '@waha/apps/chatwoot/dto/config.dto';
 import {
   ExponentialRetriesJobOptions,
   JobRemoveOptions,
@@ -178,7 +177,6 @@ const ChatWootAppModule: AppModule = {
     providers: PROVIDERS,
   },
   Service: ChatWootAppService,
-  ConfigClass: ChatWootAppConfig,
 };
 
 export default ChatWootAppModule;

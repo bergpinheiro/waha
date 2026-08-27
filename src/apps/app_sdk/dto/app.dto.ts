@@ -6,9 +6,12 @@ import {
   IsString,
   ValidateNested,
 } from 'class-validator';
-import { ApiProperty } from '@nestjs/swagger';
-import { AppName } from '@waha/apps/app_sdk/apps/name';
-import { GetApp } from '@waha/apps/app_sdk/apps/registry';
+import { ApiExtraModels, ApiProperty } from '@nestjs/swagger';
+import {
+  AppConfigClasses,
+  AppName,
+  GetAppConfigClass,
+} from '@waha/apps/app_sdk/apps/apps';
 
 export class App<T = any> {
   @IsString()
@@ -37,7 +40,10 @@ export class App<T = any> {
     if (!name) {
       return Object;
     }
-    return GetApp(name)?.ConfigClass ?? Object;
+    return GetAppConfigClass(name);
   })
   config: T;
 }
+
+// Swagger models for app configs
+ApiExtraModels(...Object.values(AppConfigClasses))(App);

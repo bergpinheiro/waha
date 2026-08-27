@@ -1,5 +1,5 @@
 import { Type } from '@nestjs/common';
-import { AppName } from '@waha/apps/app_sdk/apps/name';
+import { AppName } from '@waha/apps/app_sdk/apps/apps';
 import { GetApp } from '@waha/apps/app_sdk/apps/registry';
 import { IAppService } from '@waha/apps/app_sdk/services/IAppService';
 
@@ -36,8 +36,6 @@ export interface AppModule {
   nestjs: AppNestJS;
   // Service implementing app lifecycle hooks; must also be listed in 'nestjs.providers'
   Service: Type<IAppService>;
-  // DTO class used to transform and validate App.config
-  ConfigClass: Type<any>;
 }
 
 export function isUniqueApp(name: AppName): boolean {
