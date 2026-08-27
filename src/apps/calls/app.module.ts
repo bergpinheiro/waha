@@ -4,6 +4,10 @@ import { CallsAppService } from '@waha/apps/calls/services/CallsAppService';
 
 const CallsAppModule: AppModule = {
   name: AppName.calls,
+  openapi: {
+    title: 'Calls',
+    description: 'Handle incoming calls - reject, message back',
+  },
   definition: {
     plainkey: false,
     queue: false,

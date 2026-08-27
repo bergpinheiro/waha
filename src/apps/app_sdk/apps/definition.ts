@@ -1,5 +1,6 @@
 import { Type } from '@nestjs/common';
 import { AppName } from '@waha/apps/app_sdk/apps/apps';
+import { AppOpenAPI } from '@waha/apps/app_sdk/apps/openapi';
 import { GetApp } from '@waha/apps/app_sdk/apps/registry';
 import { IAppService } from '@waha/apps/app_sdk/services/IAppService';
 
@@ -30,6 +31,8 @@ export interface AppNestJS {
 export interface AppModule {
   // App name
   name: AppName;
+  // OpenAPI metadata (tag title, description) from 'src/apps/<name>/openapi.ts'
+  openapi: AppOpenAPI;
   // Static app metadata (requirements, behavior flags)
   definition: AppDefinition;
   // NestJS module parts

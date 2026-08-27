@@ -1,5 +1,9 @@
 import { UnprocessableEntityException } from '@nestjs/common';
 import {
+  BrazilianPhoneMemoryCacheEntry,
+  BrazilianPhoneMemoryCacheStats,
+} from '@waha/apps/brazilian-phone-numbers/dto/cache.dto';
+import {
   BrazilianPhoneNumbersAppConfig,
   DEFAULT_MEMORY_TTL,
 } from '@waha/apps/brazilian-phone-numbers/dto/config.dto';
@@ -122,6 +126,29 @@ export class BrazilianPhoneCorePlugin extends SessionPlugin<
 
   public clearMemoryCache(): void {
     this.memory.flushAll();
+  }
+
+  public getMemoryCacheStats(): BrazilianPhoneMemoryCacheStats {
+    return { total: this.memory.keys().length };
+  }
+
+  // Entries sorted by key, so API pagination over them is stable.
+  public getMemoryCacheEntries(): BrazilianPhoneMemoryCacheEntry[] {
+    const entries: BrazilianPhoneMemoryCacheEntry[] = [];
+    for (const key of this.memory.keys().sort()) {
+      const chatId = this.memory.get<string>(key);
+      if (chatId === undefined) {
+        continue;
+      }
+      // getTtl(): expiration timestamp in ms, 0 = no TTL
+      const expiresAtMs = this.memory.getTtl(key);
+      entries.push({
+        key: key,
+        chatId: chatId,
+        expiresAt: expiresAtMs ? new Date(expiresAtMs) : null,
+      });
+    }
+    return entries;
   }
 
   // Optional per-engine tier: resolve a candidate against the local contact /

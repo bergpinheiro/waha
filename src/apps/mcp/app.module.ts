@@ -6,6 +6,10 @@ import { McpAppService } from '@waha/apps/mcp/services/McpAppService';
 
 const McpAppModule: AppModule = {
   name: AppName.mcp,
+  openapi: {
+    title: 'MCP',
+    description: 'Model Context Protocol (MCP) server for AI clients',
+  },
   definition: {
     plainkey: false,
     queue: false,

@@ -7,6 +7,7 @@ import { BullAuthMiddleware } from '@waha/apps/app_sdk/auth';
 import { AppsController } from '@waha/apps/app_sdk/api/apps.controller';
 import { AppsService } from '@waha/apps/app_sdk/services/IAppsService';
 import { AppsEnabledService } from '@waha/apps/app_sdk/services/AppsEnabledService';
+import { UniqueAppResolver } from '@waha/apps/app_sdk/services/UniqueAppResolver';
 import { Auth } from '@waha/core/auth/config';
 import { AppRuntimeConfig } from '@waha/apps/app_sdk/apps/AppRuntime';
 import { GetApps } from '@waha/apps/app_sdk/apps/registry';
@@ -87,6 +88,7 @@ export const AppsEnabled = {
       provide: AppsService,
       useClass: AppsEnabledService,
     },
+    UniqueAppResolver,
     ...ENABLED_APPS.flatMap((app) => app.nestjs.providers),
   ],
 };

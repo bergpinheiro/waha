@@ -2,6 +2,7 @@ import { INestApplication } from '@nestjs/common';
 import * as lodash from 'lodash';
 import { DocumentBuilder, OpenAPIObject, SwaggerModule } from '@nestjs/swagger';
 import { DECORATORS } from '@nestjs/swagger/dist/constants';
+import { GetAppsApiTags } from '@waha/apps/app_sdk/api/tags';
 import { BasicAuthFunction } from '@waha/core/auth/basicAuth';
 import { DashboardConfigServiceCore } from '@waha/core/config/DashboardConfigServiceCore';
 import { Logger } from 'nestjs-pino';
@@ -96,7 +97,13 @@ export class SwaggerConfiguratorCore {
         'Labels - available only for WhatsApp Business accounts',
       )
       .addTag('🖼️ Media', 'Media methods')
-      .addTag('🧩 Apps', 'Applications (built-in integrations)')
+      .addTag('🧩 Apps', 'Applications (built-in integrations)');
+
+    for (const tag of GetAppsApiTags()) {
+      builder.addTag(tag.name, tag.description);
+    }
+
+    builder
       .addTag('🔍 Observability', 'Other methods')
       .addTag('🗄️ Storage', 'Storage methods')
       .addApiKey({

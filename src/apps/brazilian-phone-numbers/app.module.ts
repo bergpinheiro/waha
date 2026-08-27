@@ -5,6 +5,10 @@ import { BrazilianPhoneNumbersAppService } from '@waha/apps/brazilian-phone-numb
 
 const BrazilianPhoneNumbersAppModule: AppModule = {
   name: AppName.brazilianPhoneNumbers,
+  openapi: {
+    title: 'Brazilian Phone Numbers',
+    description: 'Resolve Brazilian phone numbers (with and without 9 digit)',
+  },
   definition: {
     plainkey: false,
     queue: false,

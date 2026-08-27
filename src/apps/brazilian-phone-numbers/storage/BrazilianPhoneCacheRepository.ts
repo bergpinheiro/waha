@@ -7,6 +7,10 @@ export interface BrazilianPhoneCacheEntry {
   resolvedAt: Date;
 }
 
+export interface BrazilianPhoneCacheRow extends BrazilianPhoneCacheEntry {
+  id: number;
+}
+
 export interface BrazilianPhoneCacheStats {
   total: number;
   verified: number;
@@ -66,6 +70,24 @@ export class BrazilianPhoneCacheRepository {
       .insert(rows)
       .onConflict(['app_pk', 'key'])
       .merge();
+  }
+
+  /**
+   * Lists cache entries for the app, sorted by id (insertion order).
+   */
+  async list(limit: number, offset: number): Promise<BrazilianPhoneCacheRow[]> {
+    const rows = await this.knex(this.tableName)
+      .where({ app_pk: this.appPk })
+      .orderBy('id', 'asc')
+      .limit(limit)
+      .offset(offset);
+    return rows.map((row) => ({
+      id: row.id,
+      key: row.key,
+      chatId: row.chat_id,
+      verified: Boolean(row.verified),
+      resolvedAt: new Date(row.resolved_at),
+    }));
   }
 
   /**

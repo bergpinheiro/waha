@@ -164,6 +164,10 @@ const PROVIDERS = [
 
 const ChatWootAppModule: AppModule = {
   name: AppName.chatwoot,
+  openapi: {
+    title: 'Chatwoot',
+    description: 'Chatwoot integration',
+  },
   definition: {
     plainkey: true,
     queue: true,
