@@ -23151,7 +23151,8 @@ proto.messages.MediaType = {
   AUDIO: 1,
   VIDEO: 2,
   DOCUMENT: 3,
-  PTV: 4
+  PTV: 4,
+  STICKER: 5
 };
 
 /**

@@ -87,6 +87,7 @@ import {
   MessageReactionRequest,
   MessageReplyRequest,
   MessageStarRequest,
+  MessageStickerRequest,
   MessageTextRequest,
   MessageVideoRequest,
   MessageVoiceRequest,
@@ -682,6 +683,10 @@ export abstract class WhatsappSession {
   abstract sendVoice(request: MessageVoiceRequest);
 
   sendVideo(request: MessageVideoRequest) {
+    throw new NotImplementedByEngineError();
+  }
+
+  sendSticker(request: MessageStickerRequest) {
     throw new NotImplementedByEngineError();
   }
 

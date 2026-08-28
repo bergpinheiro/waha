@@ -138,6 +138,7 @@ import {
   MessageReactionRequest,
   MessageReplyRequest,
   MessageStarRequest,
+  MessageStickerRequest,
   MessageTextRequest,
   MessageVideoRequest,
   MessageVoiceRequest,
@@ -1386,6 +1387,18 @@ export class WhatsappSessionNoWebCore extends WhatsappSession {
     );
     const options = await this.getMessageOptions(request);
     message.ptv = parseBool(request.asNote);
+    return this.sock.sendMessage(chatId, message, options);
+  }
+
+  @Activity()
+  async sendSticker(request: MessageStickerRequest) {
+    const message: any = await this.fileToMessage(request.file, 'sticker');
+    message.mimetype = message.mimetype || WAMimeType.STICKER;
+    const chatId = await this.hooks.wid.chat.promise(
+      request.chatId,
+      'sendSticker',
+    );
+    const options = await this.getMessageOptions(request);
     return this.sock.sendMessage(chatId, message, options);
   }
 

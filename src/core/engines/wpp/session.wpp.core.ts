@@ -46,6 +46,7 @@ import {
   MessageReplyRequest,
   MessageFileRequest,
   MessageStarRequest,
+  MessageStickerRequest,
   MessageTextRequest,
   MessageVideoRequest,
   MessageVoiceRequest,
@@ -193,6 +194,7 @@ import type {
   DocumentMessageOptions,
   FileMessageOptions,
   ImageMessageOptions,
+  StickerMessageOptions,
   VideoMessageOptions,
 } from '@wppconnect/wa-js/dist/chat';
 
@@ -799,6 +801,26 @@ export class WhatsappSessionWPPCore extends WhatsappSession {
     const chatId = await this.hooks.wid.chat.promise(
       request.chatId,
       'sendVideo',
+    );
+    return await this.sendMedia(chatId, media, options);
+  }
+
+  @Activity()
+  async sendSticker(request: MessageStickerRequest) {
+    const quotedMessageId = this.getReplyToMessageId(request as any);
+    const content = await this.fileToBuffer(request.file);
+    const mimetype = request.file.mimetype || WAMimeType.STICKER;
+    const media = WPPMedia(content, mimetype);
+    const options: StickerMessageOptions = {
+      type: 'sticker',
+      filename: request.file.filename,
+      mimetype: mimetype,
+      quotedMsg: quotedMessageId,
+      waitForAck: false,
+    };
+    const chatId = await this.hooks.wid.chat.promise(
+      request.chatId,
+      'sendSticker',
     );
     return await this.sendMedia(chatId, media, options);
   }

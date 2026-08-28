@@ -91,6 +91,7 @@ import {
   MessageReactionRequest,
   MessageReplyRequest,
   MessageStarRequest,
+  MessageStickerRequest,
   MessageTextRequest,
   MessageVideoRequest,
   SendSeenRequest,
@@ -1142,6 +1143,22 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
     const chatId = await this.hooks.wid.chat.promise(
       request.chatId,
       'sendVideo',
+    );
+    return this.whatsapp.sendMessage(chatId, media, options);
+  }
+
+  @Activity()
+  async sendSticker(request: MessageStickerRequest) {
+    const media = await this.fileToMedia(request.file);
+    media.mimetype = media.mimetype || WAMimeType.STICKER;
+    let options = await this.getMessageOptions(request);
+    options = {
+      ...options,
+      sendMediaAsSticker: true,
+    };
+    const chatId = await this.hooks.wid.chat.promise(
+      request.chatId,
+      'sendSticker',
     );
     return this.whatsapp.sendMessage(chatId, media, options);
   }
