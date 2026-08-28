@@ -2,7 +2,7 @@ import { MessageCappingTracker } from '@waha/core/abc/MessageCappingTracker';
 import { ReachoutTimelockTracker } from '@waha/core/abc/ReachoutTimelockTracker';
 import { getBrowserExecutablePath as getBrowserExecutablePathAutodetect } from '@waha/core/abc/session.browser';
 import { PluginRegistry } from '@waha/core/abc/session.plugin.registry';
-import { IMediaConverter } from '@waha/core/media/IConverter';
+import { IMediaConverter } from '@waha/core/media/IMediaConverter';
 import { Ffmpeg } from '@waha/core/utils/ffmpeg';
 import { MessagesForRead } from '@waha/core/utils/convertors';
 import {
