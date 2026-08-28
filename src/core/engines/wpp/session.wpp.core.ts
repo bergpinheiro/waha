@@ -131,7 +131,10 @@ import {
   WppSendTextStatusOptions,
 } from '@waha/core/engines/wpp/WppTypes';
 import { NotImplementedByEngineError } from '@waha/core/exceptions';
-import { IMediaEngineProcessor } from '@waha/core/media/IMediaEngineProcessor';
+import {
+  IMediaEngineProcessor,
+  MediaContent,
+} from '@waha/core/media/IMediaEngineProcessor';
 import { MediaDownloadOptions } from '@waha/core/media/IMediaManager';
 import { LottieMediaProcessorWrapper } from '@waha/core/media/LottieMediaProcessorWrapper';
 import { IWPPAuthManager } from '@waha/core/engines/wpp/IWPPAuthManager';
@@ -2677,7 +2680,9 @@ export class WhatsappSessionWPPCore extends WhatsappSession {
     options: MediaDownloadOptions,
   ): Promise<WAMedia | null> {
     try {
-      let processor = new WPPEngineMediaProcessor(this.wpp);
+      let processor: IMediaEngineProcessor<any> = new WPPEngineMediaProcessor(
+        this.wpp,
+      );
       processor = new LottieMediaProcessorWrapper(processor, this.logger);
       return await this.mediaManager.processMedia(processor, message, options);
     } catch (error) {
@@ -3113,7 +3118,15 @@ export class WPPEngineMediaProcessor implements IMediaEngineProcessor<any> {
     return toCusFormat(chatId) ?? toCusFormat(message?.from ?? '') ?? null;
   }
 
-  async getMediaBuffer(message: any): Promise<Buffer | null> {
+  async getMediaContent(message: any): Promise<MediaContent | null> {
+    const buffer = await this.getMediaBuffer(message);
+    if (!buffer) {
+      return null;
+    }
+    return { buffer: buffer };
+  }
+
+  private async getMediaBuffer(message: any): Promise<Buffer | null> {
     const base64OrDataUri = await this.wpp.downloadMedia(message);
     if (!base64OrDataUri || typeof base64OrDataUri !== 'string') {
       return null;

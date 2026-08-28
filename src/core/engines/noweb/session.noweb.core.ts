@@ -72,7 +72,10 @@ import { WidToJIDPlugin } from '@waha/plugins/WidToJIDPlugin';
 import { toVcardV3 } from '@waha/core/vcard';
 import { createAgentProxy } from '@waha/core/helpers.proxy';
 import type { Agent } from 'https';
-import { IMediaEngineProcessor } from '@waha/core/media/IMediaEngineProcessor';
+import {
+  IMediaEngineProcessor,
+  MediaContent,
+} from '@waha/core/media/IMediaEngineProcessor';
 import { MediaDownloadOptions } from '@waha/core/media/IMediaManager';
 import { LottieMediaProcessorWrapper } from '@waha/core/media/LottieMediaProcessorWrapper';
 import { QR } from '@waha/core/QR';
@@ -3740,7 +3743,15 @@ export class NOWEBEngineMediaProcessor implements IMediaEngineProcessor<any> {
     return content.mimetype;
   }
 
-  async getMediaBuffer(message: any): Promise<Buffer | null> {
+  async getMediaContent(message: any): Promise<MediaContent | null> {
+    const buffer = await this.getMediaBuffer(message);
+    if (!buffer) {
+      return null;
+    }
+    return { buffer: buffer };
+  }
+
+  private async getMediaBuffer(message: any): Promise<Buffer | null> {
     const content = extractMediaContent(message.message);
     const url = content.url;
     // Fix Stickers

@@ -39,7 +39,10 @@ import {
 import { WAMimeType } from '@waha/core/media/WAMimeType';
 import { detectMimetype } from '@waha/utils/files';
 import { NotImplementedByEngineError } from '@waha/core/exceptions';
-import { IMediaEngineProcessor } from '@waha/core/media/IMediaEngineProcessor';
+import {
+  IMediaEngineProcessor,
+  MediaContent,
+} from '@waha/core/media/IMediaEngineProcessor';
 import { MediaDownloadOptions } from '@waha/core/media/IMediaManager';
 import { LottieMediaProcessorWrapper } from '@waha/core/media/LottieMediaProcessorWrapper';
 import { QR } from '@waha/core/QR';
@@ -2838,7 +2841,8 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
     options: MediaDownloadOptions,
   ): Promise<WAMedia | null> {
     try {
-      let processor = new WEBJSEngineMediaProcessor();
+      let processor: IMediaEngineProcessor<Message> =
+        new WEBJSEngineMediaProcessor();
       processor = new LottieMediaProcessorWrapper(processor, this.logger);
       const media = await this.mediaManager.processMedia(
         processor,
@@ -2920,7 +2924,15 @@ export class WEBJSEngineMediaProcessor
     return message.rawData.mimetype;
   }
 
-  async getMediaBuffer(message: Message): Promise<Buffer | null> {
+  async getMediaContent(message: Message): Promise<MediaContent | null> {
+    const buffer = await this.getMediaBuffer(message);
+    if (!buffer) {
+      return null;
+    }
+    return { buffer: buffer };
+  }
+
+  private async getMediaBuffer(message: Message): Promise<Buffer | null> {
     return message.downloadMedia().then((media: MessageMedia) => {
       if (!media) {
         return null;

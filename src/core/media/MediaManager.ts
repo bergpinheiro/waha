@@ -1,4 +1,7 @@
-import { IMediaEngineProcessor } from '@waha/core/media/IMediaEngineProcessor';
+import {
+  IMediaEngineProcessor,
+  MediaContent,
+} from '@waha/core/media/IMediaEngineProcessor';
 import {
   IMediaManager,
   MediaDownloadOptions,
@@ -15,6 +18,14 @@ import { Logger } from 'pino';
 const mime = require('mime-types');
 // eslint-disable-next-line @typescript-eslint/no-var-requires
 const promiseRetry = require('promise-retry');
+
+function ext(mimetype: string): string {
+  const extension = mime.extension(mimetype);
+  if (mimetype == 'application/was' && !extension) {
+    return 'zip';
+  }
+  return extension;
+}
 
 export class MediaManager implements IMediaManager {
   // https://github.com/IndigoUnited/node-promise-retry
@@ -48,13 +59,9 @@ export class MediaManager implements IMediaManager {
   ): Promise<WAMedia | null> {
     const messageId = processor.getMessageId(message);
     const chatId = processor.getChatId(message);
-    const mimetype = processor.getMimetype(message);
-    const filename = processor.getFilename(message);
+    let mimetype = processor.getMimetype(message);
+    let filename = processor.getFilename(message);
 
-    let extension = mime.extension(mimetype);
-    if (mimetype == 'application/was' && !extension) {
-      extension = 'zip';
-    }
     const mediaData: MediaData = {
       session: this.sessionName,
       message: {
@@ -62,7 +69,7 @@ export class MediaManager implements IMediaManager {
         chatId: chatId,
       },
       file: {
-        extension: extension,
+        extension: ext(mimetype),
         filename: filename,
         mimetype: mimetype,
       },
@@ -75,12 +82,23 @@ export class MediaManager implements IMediaManager {
     if (!exists) {
       this.log.info(`The message ${messageId} has media, downloading it...`);
       // Fetching media
-      const buffer = await this.withRetry('Fetching media', () =>
+      const content = await this.withRetry('Fetching media', () =>
         this.fetchMedia(message, processor),
       );
+      if (content.mimetype) {
+        mimetype = content.mimetype;
+      }
+      if (content.filename) {
+        filename = content.filename;
+      }
+      mediaData.file = {
+        extension: ext(mimetype),
+        filename: filename,
+        mimetype: mimetype,
+      };
       // Saving media
       await this.withRetry('Saving media', () =>
-        this.saveMedia(buffer, mediaData),
+        this.saveMedia(content.buffer, mediaData),
       );
       this.log.info(`The media from '${messageId}' has been saved.`);
     }
@@ -88,7 +106,7 @@ export class MediaManager implements IMediaManager {
     const data = await this.withRetry('Getting media URL', () =>
       this.getStorageData(mediaData),
     );
-    return data;
+    return { ...data, mimetype: mimetype, filename: filename };
   }
 
   async processMedia<Message>(
@@ -141,16 +159,16 @@ export class MediaManager implements IMediaManager {
   private async fetchMedia(
     message: any,
     processor: IMediaEngineProcessor<any>,
-  ): Promise<Buffer> {
+  ): Promise<MediaContent> {
     const messageId = processor.getMessageId(message);
     this.log.debug(`Fetching media from WhatsApp message '${messageId}'...`);
-    const buffer = await processor.getMediaBuffer(message);
-    if (!buffer) {
+    const content = await processor.getMediaContent(message);
+    if (!content?.buffer) {
       throw new Error(
         `Message '${messageId}' has no media, but it has media flag in the engine`,
       );
     }
-    return buffer;
+    return content;
   }
 
   private async saveMedia(
