@@ -57,3 +57,6 @@ lerna-debug.log*
 !.vscode/tasks.json
 !.vscode/launch.json
 !.vscode/extensions.json
+
+# Ferramentas locais do agente - nunca vao para o remoto
+.claude/
