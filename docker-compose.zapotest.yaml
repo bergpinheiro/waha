@@ -42,7 +42,7 @@ services:
       WHATSAPP_DEFAULT_ENGINE: ${ENGINE:-ZAPO}
       WAHA_PRINT_QR: 'True'
       WAHA_LOG_FORMAT: PRETTY
-      WAHA_LOG_LEVEL: info
+      WAHA_LOG_LEVEL: ${WAHA_LOG_LEVEL:-info}
       # Both keys are required, and they play different roles:
       #   WAHA_API_KEY       - what requests authenticate against. Without it
       #                        ApiKeyAuthFactory falls back to NoAuth and the
