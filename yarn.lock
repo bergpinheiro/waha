@@ -5300,7 +5300,7 @@ __metadata:
 
 "@wppconnect-team/wppconnect@github:wppconnect-team/wppconnect#master":
   version: 2.3.1
-  resolution: "@wppconnect-team/wppconnect@https://github.com/wppconnect-team/wppconnect.git#commit=30660bcc15aac67f96b77c9baa7b7e3737a57d27"
+  resolution: "@wppconnect-team/wppconnect@https://github.com/wppconnect-team/wppconnect.git#commit=550622bcffa1cbcd219fcd2f0caaa5bc04ed53fe"
   dependencies:
     "@img/sharp-win32-x64": "npm:^0.35.3"
     "@wppconnect/wa-js": "npm:^4.6.0"
@@ -5337,14 +5337,14 @@ __metadata:
       optional: true
     fsevents:
       optional: true
-  checksum: 10/c6c2758e1f3f54d7ff20708aa6da2db548e2138f251107ad6006a9a556b959b2bc302c1c6bd3122ce906ca009f3b8b313f9016041f6c0c7ee7e496e5f34ed96c
+  checksum: 10/102e27a016f4e523088296ae6cb2f944f0e0f6de3195639fd91b9bb901ae6594cd45e9bf46619f15db21c7c5a76c747a1b15f8c5a687b37942c7ece0a25d5aea
   languageName: node
   linkType: hard
 
 "@wppconnect/wa-js@github:wppconnect-team/wa-js#main":
   version: 4.6.0
-  resolution: "@wppconnect/wa-js@https://github.com/wppconnect-team/wa-js.git#commit=e0a9efd72b6f2b18fc1f61dfafd7519713bc7a20"
-  checksum: 10/13018ffa9bf4566aa384a9d151f79164786a666fddddb018cc1459e90122c5ef28bbf3a9784b2527f5984c2f7fc4811722adb7464b6ecccc717dfc17ad998497
+  resolution: "@wppconnect/wa-js@https://github.com/wppconnect-team/wa-js.git#commit=27ab2c72286267897440628feb71d06879ac82a5"
+  checksum: 10/d39316b911a150033872e2e5ed54a61e2a0d6e281fbb15a40687a5a0b4e1c3cc3f327fad00c277a3bd3cd1af492179a8a76c83ad976fbd311b6349d197dac1bf
   languageName: node
   linkType: hard
 
