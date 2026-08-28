@@ -14,7 +14,9 @@ import {
   UseGuards,
   UsePipes,
 } from '@nestjs/common';
-import { ApiOperation, ApiSecurity, ApiTags } from '@nestjs/swagger';
+import { ApiOperation, ApiParam, ApiSecurity, ApiTags } from '@nestjs/swagger';
+import { AppName } from '@waha/apps/app_sdk/apps/apps';
+import { UniqueAppResolver } from '@waha/apps/app_sdk/services/UniqueAppResolver';
 import {
   AppsService,
   IAppsService,
@@ -26,6 +28,7 @@ import {
   CanServer,
   CanSession,
   FromBody,
+  FromParam,
   FromQuery,
 } from '@waha/core/auth/policies';
 import { Action, session as SessionName } from '@waha/core/auth/casl.types';
@@ -44,6 +47,7 @@ export class AppsController {
     @Inject(AppsService)
     private appsService: IAppsService,
     private manager: SessionManager,
+    private resolver: UniqueAppResolver,
   ) {}
 
   @Get('/')
@@ -141,5 +145,41 @@ export class AppsController {
     if (isRunning && GetApp(app.app)?.definition.restartOnChange) {
       await this.manager.restart(app.session);
     }
+  }
+
+  @Post('/:id/purge')
+  @ApiOperation({
+    summary: 'Purge app storage by app ID',
+    description:
+      "Delete the app's stored data (database rows, caches) while keeping the app configured.",
+  })
+  @CheckPolicies(CanServer(Action.Retrieve))
+  @UsePipes(new WAHAValidationPipe())
+  async purge(@Param('id') id: string, @Req() req: any): Promise<App> {
+    const existing = await this.appsService.get(this.manager, id);
+    if (!existing) {
+      throw new NotFoundException(`App '${id}' not found`);
+    }
+    if (!req.ability?.can(Action.App, new SessionName(existing.session))) {
+      throw new ForbiddenException();
+    }
+    return await this.appsService.purge(this.manager, id);
+  }
+
+  @Post('/:app/:session/purge')
+  @ApiOperation({
+    summary: 'Purge app storage by app name and session',
+    description:
+      "Delete the unique app's stored data for the session. The app must be enabled.",
+  })
+  @ApiParam({ name: 'app', enum: AppName })
+  @CheckPolicies(CanSession(Action.App, FromParam('session')))
+  @UsePipes(new WAHAValidationPipe())
+  async purgeUniqueApp(
+    @Param('app') appName: string,
+    @Param('session') session: string,
+  ): Promise<App> {
+    const app = await this.resolver.getEnabledApp(session, appName);
+    return await this.appsService.purge(this.manager, app.id);
   }
 }

@@ -20,6 +20,7 @@ import {
   DEFAULT_PERSISTENT_TTL,
 } from '@waha/apps/brazilian-phone-numbers/dto/config.dto';
 import { BrazilianPhoneCorePlugin } from '@waha/apps/brazilian-phone-numbers/plugins/BrazilianPhoneCorePlugin';
+import { BrazilianPhoneNumbersAppService } from '@waha/apps/brazilian-phone-numbers/services/BrazilianPhoneNumbersAppService';
 import { BrazilianPhoneCacheRepository } from '@waha/apps/brazilian-phone-numbers/storage/BrazilianPhoneCacheRepository';
 import { AppName } from '@waha/apps/app_sdk/apps/apps';
 import { UniqueAppResolver } from '@waha/apps/app_sdk/services/UniqueAppResolver';
@@ -44,6 +45,7 @@ export class BrazilianPhoneNumbersController {
   constructor(
     private manager: SessionManager,
     private resolver: UniqueAppResolver,
+    private appService: BrazilianPhoneNumbersAppService,
   ) {}
 
   @Get('cache/memory')
@@ -134,8 +136,7 @@ export class BrazilianPhoneNumbersController {
     @Param('session') session: string,
   ): Promise<BrazilianPhoneCachePurgeResponse> {
     const app = await this.getApp(session);
-    const deleted = await this.repository(app).purge();
-    this.resolver.getPlugin(app, BrazilianPhoneCorePlugin)?.clearMemoryCache();
+    const deleted = await this.appService.purgeCache(this.manager, app);
     return { deleted: deleted };
   }
 

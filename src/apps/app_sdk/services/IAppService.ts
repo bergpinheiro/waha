@@ -45,6 +45,12 @@ export interface IAppService {
   beforeDeleted(manager: SessionManager, app: App): Promise<void>;
 
   /**
+   * Deletes the app's stored data (database rows, caches) while keeping the app configured.
+   * Apps without storage implement it as a no-op.
+   */
+  purge(manager: SessionManager, app: App): Promise<void>;
+
+  /**
    * Called for each app before a bulk session deletion removes all app records.
    * Use this to clean up external resources tied to the app (e.g. API keys).
    */

@@ -103,6 +103,11 @@ export class McpAppService implements IAppService {
     await this.deleteKey(manager, app);
   }
 
+  async purge(manager: SessionManager, app: App<McpAppConfig>): Promise<void> {
+    void manager;
+    void app;
+  }
+
   async enrich(manager: SessionManager, app: App<McpAppConfig>): Promise<void> {
     const keyId = app.config?.key_id;
     if (!keyId) {

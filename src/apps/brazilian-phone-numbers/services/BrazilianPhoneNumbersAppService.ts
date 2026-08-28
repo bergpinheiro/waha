@@ -9,6 +9,7 @@ import { BrazilianPhoneCorePlugin } from '@waha/apps/brazilian-phone-numbers/plu
 import { BrazilianPhoneCacheRepository } from '@waha/apps/brazilian-phone-numbers/storage/BrazilianPhoneCacheRepository';
 import { App } from '@waha/apps/app_sdk/dto/app.dto';
 import { IAppService } from '@waha/apps/app_sdk/services/IAppService';
+import { UniqueAppResolver } from '@waha/apps/app_sdk/services/UniqueAppResolver';
 import { PluginOptions } from '@waha/core/abc/session.plugin';
 import { AppDB } from '@waha/apps/app_sdk/storage/types';
 import { DataStore } from '@waha/core/abc/DataStore';
@@ -29,6 +30,8 @@ const PLUGINS: Record<WAHAEngine, typeof BrazilianPhoneCorePlugin> = {
 
 @Injectable()
 export class BrazilianPhoneNumbersAppService implements IAppService {
+  constructor(private readonly resolver: UniqueAppResolver) {}
+
   validate(app: App<BrazilianPhoneNumbersAppConfig>): void {
     void app;
     return;
@@ -91,6 +94,28 @@ export class BrazilianPhoneNumbersAppService implements IAppService {
   ): Promise<void> {
     void manager;
     void app;
+  }
+
+  async purge(
+    manager: SessionManager,
+    app: App<BrazilianPhoneNumbersAppConfig>,
+  ): Promise<void> {
+    await this.purgeCache(manager, app as AppDB);
+  }
+
+  /**
+   * Deletes all persistent cache entries and clears the in-memory tier when the session is running.
+   */
+  async purgeCache(manager: SessionManager, app: AppDB): Promise<number> {
+    const knex = manager.store.getWAHADatabase();
+    const config = app.config as BrazilianPhoneNumbersAppConfig;
+    const ttlMs =
+      parseDurationMs(config?.cache?.persistentTtl) ??
+      ms(DEFAULT_PERSISTENT_TTL);
+    const repository = new BrazilianPhoneCacheRepository(knex, app.pk, ttlMs);
+    const deleted = await repository.purge();
+    this.resolver.getPlugin(app, BrazilianPhoneCorePlugin)?.clearMemoryCache();
+    return deleted;
   }
 
   async enrich(

@@ -186,6 +186,35 @@ export class AppsEnabledService implements IAppsService {
     return app;
   }
 
+  async purge(manager: SessionManager, appId: string): Promise<App> {
+    const knex = manager.store.getWAHADatabase();
+    const repo = new AppRepository(knex);
+    const app = await repo.getById(appId);
+    if (!app) {
+      throw new NotFoundException(`App '${appId}' not found`);
+    }
+    const service = this.getAppService(app);
+    if (!service) {
+      throw new AppDisableError(app.app);
+    }
+    await service.purge(manager, app);
+    delete app.pk;
+    return app;
+  }
+
+  async purgeBySession(manager: SessionManager, session: string) {
+    const knex = manager.store.getWAHADatabase();
+    const repo = new AppRepository(knex);
+    const apps = await repo.getAllBySession(session);
+    for (const app of apps) {
+      const service = this.getAppService(app);
+      if (!service) {
+        continue;
+      }
+      await service.purge(manager, app);
+    }
+  }
+
   async removeBySession(manager: SessionManager, session: string) {
     const knex = manager.store.getWAHADatabase();
     const repo = new AppRepository(knex);

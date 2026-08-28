@@ -74,6 +74,14 @@ export class CallsAppService implements IAppService {
     void app;
   }
 
+  async purge(
+    manager: SessionManager,
+    app: App<CallsAppConfig>,
+  ): Promise<void> {
+    void manager;
+    void app;
+  }
+
   async enrich(
     manager: SessionManager,
     app: App<CallsAppConfig>,
