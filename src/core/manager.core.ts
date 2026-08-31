@@ -72,7 +72,6 @@ import { populateSessionInfo, SessionManager } from './abc/manager.abc';
 
 import { SessionParams, WhatsappSession } from './abc/session.abc';
 import { EngineConfigService } from './config/EngineConfigService';
-import { SessionRuntimeInfoPlugin } from '@waha/core/plugins/SessionRuntimeInfoPlugin';
 import { WebhookPlugin } from '@waha/core/plugins/WebhookPlugin';
 import { SessionPluginsService } from '@waha/plugins/SessionPluginsService';
 
@@ -381,7 +380,6 @@ export class SessionManagerCore
 
     // Plugins
     const webhooks = this.getWebhooks(config);
-    session.plugins.add(SessionRuntimeInfoPlugin.with(null, null));
     session.plugins.add(WebhookPlugin.with({ webhooks: webhooks }, null));
     // Plugins contributed by modules (SessionPluginsModule)
     for (const options of this.sessionPlugins.plugins(session)) {
