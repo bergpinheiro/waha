@@ -51,7 +51,7 @@ import {
   parseMessageIdSerialized,
   SerializeMessageKey,
 } from '@waha/core/utils/ids';
-import { DistinctAck } from '@waha/core/utils/reactive';
+import { DistinctAck, DistinctMessages } from '@waha/core/utils/reactive';
 import { splitAt } from '@waha/helpers';
 import { PairingCodeResponse } from '@waha/structures/auth.dto';
 import {
@@ -198,6 +198,7 @@ import {
   PollVote as WebjsPollVote,
   Message,
   MessageMedia,
+  MessageTypes,
   Reaction,
   WAState,
 } from 'whatsapp-web.js';
@@ -2354,9 +2355,13 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
     const messageReceived$ = fromEvent(this.whatsapp, Events.MESSAGE_RECEIVED);
     const messagesFromOthers$ = messageReceived$.pipe(
       filter((msg: Message) => this.jids.include(msg?.id?.remote)),
+      filter((msg: Message) => this.shouldProcessIncomingMessage(msg)),
       mergeMap((msg: any) =>
         this.processIncomingMessage(msg, this.media.events),
       ),
+      // Deduplicate messages by ID to prevent duplicate webhooks
+      // @see https://github.com/devlikeapro/waha/issues/1564
+      DistinctMessages(),
       share(),
     );
     this.events2.get(WAHAEvents.MESSAGE).switch(messagesFromOthers$);
@@ -2364,9 +2369,13 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
     const messageCreate$ = fromEvent(this.whatsapp, Events.MESSAGE_CREATE);
     const messagesFromAll$ = messageCreate$.pipe(
       filter((msg: Message) => this.jids.include(msg?.id?.remote)),
+      filter((msg: Message) => this.shouldProcessIncomingMessage(msg)),
       mergeMap((msg: any) =>
         this.processIncomingMessage(msg, this.media.events),
       ),
+      // Deduplicate messages by ID to prevent duplicate webhooks
+      // @see https://github.com/devlikeapro/waha/issues/1564
+      DistinctMessages(),
       share(),
     );
     this.events2.get(WAHAEvents.MESSAGE_ANY).switch(messagesFromAll$);
@@ -2614,6 +2623,24 @@ export class WhatsappSessionWebJSCore extends WhatsappSession {
     this.events2
       .get(WAHAEvents.CALL_REJECTED)
       .switch(this.callRejected$.asObservable());
+  }
+
+  // System messages WhatsApp Web synthesizes on chat creation
+  // - encryption notice, contact info card, disappearing mode.
+  private static readonly SYSTEM_NOTIFICATION_TYPES = new Set<string>([
+    MessageTypes.E2E_NOTIFICATION,
+    MessageTypes.NOTIFICATION,
+    MessageTypes.NOTIFICATION_TEMPLATE,
+    MessageTypes.BROADCAST_NOTIFICATION,
+  ]);
+
+  protected shouldProcessIncomingMessage(message: Message): boolean {
+    if (!message) {
+      return false;
+    }
+    // Ignore system notification messages
+    const type = message.type as string;
+    return !WhatsappSessionWebJSCore.SYSTEM_NOTIFICATION_TYPES.has(type);
   }
 
   protected async processIncomingMessage(
