@@ -33,6 +33,7 @@ import { SessionPluginsModule } from '@waha/plugins/session.plugins.module';
 import { isPresenceAutoOnlineEnabled } from '@waha/modules/waha-maintain-online-status/maintain-online-status.config';
 import { MaintainOnlineStatusModule } from '@waha/modules/waha-maintain-online-status/maintain-online-status.module';
 import { isJidEngine } from '@waha/modules/waha-wid-jid/wid-jid.plugins';
+import { MessageSourceModule } from '@waha/modules/waha-message-source/message-source.module';
 import { WidJIDModule } from '@waha/modules/waha-wid-jid/wid-jid.module';
 import { WidSuffixModule } from '@waha/modules/waha-wid-suffix/wid-suffix.module';
 import { CheckFreeDiskSpaceIndicator } from '@waha/core/health/CheckFreeDiskSpaceIndicator';
@@ -146,6 +147,7 @@ export const IMPORTS_CORE = [
   PassportModule,
   TerminusModule,
   SessionPluginsModule,
+  MessageSourceModule,
   WidSuffixModule,
   ConditionalModule.registerWhen(WidJIDModule, isJidEngine, {
     debug: isDebugEnabled(),
