@@ -12,20 +12,27 @@ export class EventWildUnmask {
     this.all = all ? Object.values(all) : this.events;
   }
 
-  unmask(events: string[]) {
+  unmask(events: string[]): { events: string[]; unknown: string[] } {
     const rightEvents = [];
+    const unknown = [];
     if (events.includes('*')) {
       rightEvents.push(...this.all);
     }
 
-    // Get only known events, log and ignore others
     for (const event of events) {
+      if (event === '*') {
+        continue;
+      }
       if (!this.events.includes(event)) {
+        unknown.push(event);
         continue;
       }
       rightEvents.push(event);
     }
-    // return unique values
-    return [...new Set(rightEvents)];
+    // unique values, the caller decides what to do with unknown ones
+    return {
+      events: [...new Set(rightEvents)],
+      unknown: [...new Set(unknown)],
+    };
   }
 }

@@ -34,7 +34,13 @@ export class WebhookPlugin extends SessionPlugin<WebhookPluginConfig> {
   }
 
   private getSuitableEvents(events: WAHAEvents[] | string[]): WAHAEvents[] {
-    return this.eventUnmask.unmask(events);
+    const result = this.eventUnmask.unmask(events);
+    if (result.unknown.length > 0) {
+      this.logger.warn(
+        `Ignoring unknown webhook events: ${result.unknown.join(', ')}`,
+      );
+    }
+    return result.events as WAHAEvents[];
   }
 
   private configure(webhook: WebhookConfig) {
