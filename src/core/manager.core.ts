@@ -67,12 +67,10 @@ import {
   SessionDTO,
   SessionInfo,
 } from '../structures/sessions.dto';
-import { WebhookConfig } from '../structures/webhooks.config.dto';
 import { populateSessionInfo, SessionManager } from './abc/manager.abc';
 
 import { SessionParams, WhatsappSession } from './abc/session.abc';
 import { EngineConfigService } from './config/EngineConfigService';
-import { WebhookPlugin } from '@waha/core/plugins/WebhookPlugin';
 import { SessionPluginsService } from '@waha/plugins/SessionPluginsService';
 
 const ALL = '*';
@@ -379,9 +377,6 @@ export class SessionManagerCore
     this.updateSessions();
 
     // Plugins
-    const webhooks = this.getWebhooks(config);
-    session.plugins.add(WebhookPlugin.with({ webhooks: webhooks }, null));
-    // Plugins contributed by modules (SessionPluginsModule)
     for (const options of this.sessionPlugins.plugins(session)) {
       session.plugins.add(options);
     }
@@ -477,21 +472,6 @@ export class SessionManagerCore
     await this.sessionAuthRepository.clean(name);
     await this.sessionMeRepository.removeMe(name);
     this.log.info({ session: name }, `Session has been logged out.`);
-  }
-
-  /**
-   * Combine per session and global webhooks
-   */
-  private getWebhooks(config: SessionConfig) {
-    let webhooks: WebhookConfig[] = [];
-    if (config?.webhooks) {
-      webhooks = webhooks.concat(config.webhooks);
-    }
-    const globalWebhookConfig = this.config.getWebhookConfig();
-    if (globalWebhookConfig) {
-      webhooks.push(globalWebhookConfig);
-    }
-    return webhooks;
   }
 
   /**

@@ -1,3 +1,4 @@
+import { Injectable, OnApplicationBootstrap } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { WAHAEvents } from '@waha/structures/enums.dto';
 import {
@@ -19,10 +20,18 @@ enum Env {
   WHATSAPP_HOOK_CUSTOM_HEADERS = 'WHATSAPP_HOOK_CUSTOM_HEADERS',
 }
 
-export class GlobalWebhookConfigConfig {
+@Injectable()
+export class GlobalWebhookConfig implements OnApplicationBootstrap {
   protected _config: WebhookConfig | null = null;
 
   constructor(private configService: ConfigService) {}
+
+  onApplicationBootstrap() {
+    const error = this.validateConfig();
+    if (error) {
+      throw new Error(`Invalid global webhook config:\n${error}\n`);
+    }
+  }
 
   private getUrl(): string | undefined {
     return this.configService.get(Env.WHATSAPP_HOOK_URL);

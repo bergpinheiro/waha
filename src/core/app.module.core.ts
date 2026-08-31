@@ -34,6 +34,7 @@ import { isPresenceAutoOnlineEnabled } from '@waha/modules/waha-maintain-online-
 import { MaintainOnlineStatusModule } from '@waha/modules/waha-maintain-online-status/maintain-online-status.module';
 import { isJidEngine } from '@waha/modules/waha-wid-jid/wid-jid.plugins';
 import { MessageSourceModule } from '@waha/modules/waha-message-source/message-source.module';
+import { WebhookModule } from '@waha/modules/waha-webhook/webhook.module';
 import { SessionRuntimeInfoModule } from '@waha/modules/waha-session-runtime-info/session-runtime-info.module';
 import { WidJIDModule } from '@waha/modules/waha-wid-jid/wid-jid.module';
 import { WidSuffixModule } from '@waha/modules/waha-wid-suffix/wid-suffix.module';
@@ -149,6 +150,7 @@ export const IMPORTS_CORE = [
   TerminusModule,
   SessionPluginsModule,
   SessionRuntimeInfoModule,
+  WebhookModule,
   MessageSourceModule,
   WidSuffixModule,
   ConditionalModule.registerWhen(WidJIDModule, isJidEngine, {

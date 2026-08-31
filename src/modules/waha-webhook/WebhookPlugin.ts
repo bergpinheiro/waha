@@ -1,24 +1,36 @@
 import { populateSessionInfo } from '@waha/core/abc/manager.abc';
 import { SessionPlugin } from '@waha/core/abc/session.plugin';
-import { WebhookSender } from '@waha/core/plugins/WebhookPlugin.sender';
+import { WebhookSender } from '@waha/modules/waha-webhook/WebhookPlugin.sender';
 import { WAHAEvents, WAHAEventsWild } from '@waha/structures/enums.dto';
 import { WebhookConfig } from '@waha/structures/webhooks.config.dto';
 import { EventWildUnmask } from '@waha/utils/events';
 
 export class WebhookPluginConfig {
-  webhooks: WebhookConfig[];
+  webhooks: WebhookConfig | null;
 }
 
 /**
- * Sends session events to the configured webhooks (per session and global ones)
+ * Sends session events to the configured webhooks (per session and predefined ones)
  */
 export class WebhookPlugin extends SessionPlugin<WebhookPluginConfig> {
   private eventUnmask = new EventWildUnmask(WAHAEvents, WAHAEventsWild);
 
   attach(): void {
-    for (const webhookConfig of this.config.webhooks) {
+    for (const webhookConfig of this.webhooks()) {
       this.configure(webhookConfig);
     }
+  }
+
+  /**
+   * Session webhooks + the predefined one (WHATSAPP_HOOK_URL)
+   */
+  private webhooks(): WebhookConfig[] {
+    const webhooks: WebhookConfig[] = [];
+    webhooks.push(...(this.session.sessionConfig?.webhooks ?? []));
+    if (this.config.webhooks) {
+      webhooks.push(this.config.webhooks);
+    }
+    return webhooks;
   }
 
   private getSuitableEvents(events: WAHAEvents[] | string[]): WAHAEvents[] {

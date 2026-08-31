@@ -1,22 +1,18 @@
-import { Injectable, Logger, OnApplicationBootstrap } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { GlobalWebhookConfigConfig } from '@waha/core/plugins/WebhookPlugin.env';
 import { MediaDownloadOptions } from '@waha/core/media/IMediaManager';
 import { IgnoreJidConfig } from '@waha/core/utils/jids';
 import * as lodash from 'lodash';
 
 import { parseBool } from './helpers';
-import { WebhookConfig } from './structures/webhooks.config.dto';
 import { Auth } from '@waha/core/auth/config';
 
 @Injectable()
-export class WhatsappConfigService implements OnApplicationBootstrap {
+export class WhatsappConfigService {
   private logger: Logger;
-  private webhookConfig: GlobalWebhookConfigConfig;
 
   constructor(private configService: ConfigService) {
     this.logger = new Logger('WhatsappConfigService');
-    this.webhookConfig = new GlobalWebhookConfigConfig(configService);
   }
 
   get schema() {
@@ -155,10 +151,6 @@ export class WhatsappConfigService implements OnApplicationBootstrap {
     return this.configService.get('WHATSAPP_PROXY_SERVER_PASSWORD', undefined);
   }
 
-  getWebhookConfig(): WebhookConfig | undefined {
-    return this.webhookConfig.config;
-  }
-
   getSessionMongoUrl(): string | undefined {
     return this.configService.get('WHATSAPP_SESSIONS_MONGO_URL', undefined);
   }
@@ -235,12 +227,5 @@ export class WhatsappConfigService implements OnApplicationBootstrap {
       this.configService.get('WAHA_SESSION_CONFIG_IGNORE_BROADCAST', 'false'),
     );
     return { status, groups, channels, broadcast };
-  }
-
-  onApplicationBootstrap() {
-    const error = this.webhookConfig.validateConfig();
-    if (error) {
-      throw new Error(`Invalid global webhook config:\n${error}\n`);
-    }
   }
 }
