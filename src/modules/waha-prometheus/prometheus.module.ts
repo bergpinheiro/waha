@@ -10,12 +10,15 @@ import { EventMetricsSubscriber } from '@waha/modules/waha-prometheus/prometheus
 import { HttpMetricsMiddleware } from '@waha/modules/waha-prometheus/prometheus.http.middleware';
 import { WahaMetrics } from '@waha/modules/waha-prometheus/prometheus.metrics';
 import { SessionMetricsCollector } from '@waha/modules/waha-prometheus/prometheus.sessions.collector';
+import { HttpPathsModule } from '@waha/plugins/http.paths.module';
+import { HttpPathsService } from '@waha/plugins/HttpPathsService';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       validationSchema: PrometheusEnvSchema,
     }),
+    HttpPathsModule,
   ],
   providers: [
     PrometheusConfigService,
@@ -32,7 +35,15 @@ import { SessionMetricsCollector } from '@waha/modules/waha-prometheus/prometheu
  * optional basic auth via WAHA_PROMETHEUS_USERNAME and WAHA_PROMETHEUS_PASSWORD.
  */
 export class PrometheusModule implements NestModule {
-  constructor(private config: PrometheusConfigService) {}
+  constructor(
+    private config: PrometheusConfigService,
+    httpPaths: HttpPathsService,
+  ) {
+    httpPaths.register({
+      prefix: this.config.path,
+      include: { accessLog: false, authBasic: false, metrics: false },
+    });
+  }
 
   configure(consumer: MiddlewareConsumer) {
     const credentials = this.config.credentials;

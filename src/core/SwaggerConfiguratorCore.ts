@@ -4,8 +4,7 @@ import { DocumentBuilder, OpenAPIObject, SwaggerModule } from '@nestjs/swagger';
 import { DECORATORS } from '@nestjs/swagger/dist/constants';
 import { GetAppsApiTags } from '@waha/apps/app_sdk/api/tags';
 import { BasicAuthFunction } from '@waha/core/auth/basicAuth';
-import { DashboardConfigServiceCore } from '@waha/core/config/DashboardConfigServiceCore';
-import { getPrometheusExcludePaths } from '@waha/modules/waha-prometheus/prometheus.config';
+import { HttpPathsService } from '@waha/plugins/HttpPathsService';
 import { Logger } from 'nestjs-pino';
 
 import { WhatsappConfigService } from '../config.service';
@@ -194,21 +193,8 @@ export class SwaggerConfiguratorCore {
 
   setUpAuth(credentials: [string, string]): void {
     const [username, password] = credentials;
-    const dashboardConfig = this.app.get(DashboardConfigServiceCore);
-    const config = this.app.get(WhatsappConfigService);
-    const exclude = lodash.uniq([
-      '/api/',
-      '/mcp',
-      dashboardConfig.dashboardUri,
-      '/health',
-      '/ping',
-      '/ws',
-      '/webhooks/',
-      '/jobs',
-      '/jobs/',
-      ...config.getExcludedFullPaths(),
-      ...getPrometheusExcludePaths(),
-    ]);
+    const httpPaths = this.app.get(HttpPathsService);
+    const exclude = lodash.uniq(httpPaths.globalAuthExcludePrefixes());
 
     const authFunction = BasicAuthFunction(username, password, exclude);
     this.app.use(authFunction);

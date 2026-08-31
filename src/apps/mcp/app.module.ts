@@ -3,6 +3,7 @@ import { AppName } from '@waha/apps/app_sdk/apps/apps';
 import { McpController } from '@waha/apps/mcp/api/mcp.controller';
 import { McpService } from '@waha/apps/mcp/mcp.service';
 import { McpAppService } from '@waha/apps/mcp/services/McpAppService';
+import { HttpPathsRegistration } from '@waha/plugins/http.paths.module';
 
 const McpAppModule: AppModule = {
   name: AppName.mcp,
@@ -18,7 +19,12 @@ const McpAppModule: AppModule = {
     unique: false,
   },
   nestjs: {
-    imports: [],
+    imports: [
+      HttpPathsRegistration(
+        { prefix: '/mcp', include: { authBasic: false } },
+        { prefix: 'mcp', include: { authApiKey: true } },
+      ),
+    ],
     controllers: [McpController],
     providers: [McpService, McpAppService],
   },

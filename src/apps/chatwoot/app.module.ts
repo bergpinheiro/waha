@@ -39,10 +39,15 @@ import { TaskContactsPullConsumer } from '@waha/apps/chatwoot/consumers/task/con
 import { TaskMessagesPullConsumer } from '@waha/apps/chatwoot/consumers/task/messages.pull';
 import { BullModule } from '@nestjs/bullmq';
 import { QueueManager } from '@waha/apps/chatwoot/services/QueueManager';
+import { HttpPathsRegistration } from '@waha/plugins/http.paths.module';
 
 const CONTROLLERS = [ChatwootWebhookController, ChatwootLocalesController];
 
 const IMPORTS = lodash.flatten([
+  HttpPathsRegistration({
+    prefix: '/webhooks/',
+    include: { authBasic: false },
+  }),
   BullModule.registerFlowProducer({
     name: FlowProducerName.MESSAGES_PULL_FLOW,
   }),

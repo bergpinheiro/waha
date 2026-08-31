@@ -11,8 +11,13 @@ import { UniqueAppResolver } from '@waha/apps/app_sdk/services/UniqueAppResolver
 import { Auth } from '@waha/core/auth/config';
 import { AppRuntimeConfig } from '@waha/apps/app_sdk/apps/AppRuntime';
 import { GetApps } from '@waha/apps/app_sdk/apps/registry';
+import { HttpPathsRegistration } from '@waha/plugins/http.paths.module';
 
 const QUEUES_IMPORTS_REQUIRED = [
+  HttpPathsRegistration(
+    { prefix: '/jobs', include: { authBasic: false } },
+    { prefix: '/jobs/', include: { authBasic: false, accessLog: false } },
+  ),
   BullModule.forRoot({
     connection: {
       url: process.env.REDIS_URL || 'redis://:redis@localhost:6379',

@@ -29,15 +29,14 @@ import { MediaLocalStorageModule } from '@waha/core/media/local/media.local.stor
 import { MediaLocalStorageConfig } from '@waha/core/media/local/MediaLocalStorageConfig';
 import { MediaPsqlStorageModule } from '@waha/core/media/psql/media.psql.storage.module';
 import { MediaS3StorageModule } from '@waha/core/media/s3/media.s3.storage.module';
+import { HttpPathsModule } from '@waha/plugins/http.paths.module';
+import { HttpPathsService } from '@waha/plugins/HttpPathsService';
 import { SessionPluginsModule } from '@waha/plugins/session.plugins.module';
 import { isPresenceAutoOnlineEnabled } from '@waha/modules/waha-maintain-online-status/maintain-online-status.config';
 import { MaintainOnlineStatusModule } from '@waha/modules/waha-maintain-online-status/maintain-online-status.module';
 import { isJidEngine } from '@waha/modules/waha-wid-jid/wid-jid.plugins';
 import { MessageSourceModule } from '@waha/modules/waha-message-source/message-source.module';
-import {
-  getPrometheusPath,
-  isPrometheusEnabled,
-} from '@waha/modules/waha-prometheus/prometheus.config';
+import { isPrometheusEnabled } from '@waha/modules/waha-prometheus/prometheus.config';
 import { PrometheusModule } from '@waha/modules/waha-prometheus/prometheus.module';
 import { WebhookModule } from '@waha/modules/waha-webhook/webhook.module';
 import { SessionRuntimeInfoModule } from '@waha/modules/waha-session-runtime-info/session-runtime-info.module';
@@ -94,40 +93,37 @@ import { SessionService } from '@waha/core/services/SessionService';
 
 export const IMPORTS_CORE = [
   ...AppsModuleExports.imports,
-  LoggerModule.forRoot({
-    renameContext: 'name',
-    pinoHttp: {
-      level: getPinoLogLevel(),
-      useLevel: getPinoHttpUseLevel(),
-      transport: getPinoTransport(),
-      autoLogging: {
-        ignore: (req) => {
-          return (
-            req.url.startsWith('/ping') ||
-            req.url.startsWith(getPrometheusPath()) ||
-            req.url.startsWith('/dashboard/') ||
-            req.url.startsWith('/api/files/') ||
-            req.url.startsWith('/api/s3/') ||
-            req.url.startsWith('/jobs/')
-          );
+  LoggerModule.forRootAsync({
+    imports: [HttpPathsModule],
+    inject: [HttpPathsService],
+    useFactory: (httpPaths: HttpPathsService) => {
+      return {
+        renameContext: 'name',
+        pinoHttp: {
+          level: getPinoLogLevel(),
+          useLevel: getPinoHttpUseLevel(),
+          transport: getPinoTransport(),
+          autoLogging: {
+            ignore: (req) => httpPaths.isAccessLogIgnored(req.url),
+          },
+          redact: {
+            paths: ['req.query["x-api-key"]'],
+            censor: '[REDACTED]',
+          },
+          customAttributeKeys: { req: 'req', res: 'res' },
+          serializers: {
+            req: (req) => ({
+              method: req.method,
+              url: redactUrlParams('x-api-key', req.url, req.query),
+              query: req.query,
+              params: req.params,
+            }),
+            res: (res) => ({
+              statusCode: res.statusCode,
+            }),
+          },
         },
-      },
-      redact: {
-        paths: ['req.query["x-api-key"]'],
-        censor: '[REDACTED]',
-      },
-      customAttributeKeys: { req: 'req', res: 'res' },
-      serializers: {
-        req: (req) => ({
-          method: req.method,
-          url: redactUrlParams('x-api-key', req.url, req.query),
-          query: req.query,
-          params: req.params,
-        }),
-        res: (res) => ({
-          statusCode: res.statusCode,
-        }),
-      },
+      };
     },
   }),
   ConfigModule.forRoot({
@@ -154,6 +150,7 @@ export const IMPORTS_CORE = [
   }),
   PassportModule,
   TerminusModule,
+  HttpPathsModule,
   SessionPluginsModule,
   SessionRuntimeInfoModule,
   WebhookModule,
@@ -281,8 +278,29 @@ export class AppModuleCore {
   constructor(
     protected config: WhatsappConfigService,
     private dashboardConfig: DashboardConfigServiceCore,
+    private httpPaths: HttpPathsService,
   ) {
     this.startTimestamp = Date.now();
+    this.httpPaths.register(
+      { prefix: '/ping', include: { accessLog: false, authBasic: false } },
+      { prefix: '/api/', include: { authBasic: false } },
+      { prefix: 'api', include: { authApiKey: true } },
+      { prefix: '/health', include: { authBasic: false } },
+      { prefix: 'health', include: { authApiKey: true } },
+      { prefix: '/ws', include: { authBasic: false } },
+      {
+        prefix: this.dashboardConfig.dashboardUri,
+        include: { authBasic: false },
+      },
+      {
+        prefix: this.dashboardConfig.dashboardUri + '/',
+        include: { accessLog: false },
+      },
+    );
+    // WHATSAPP_API_KEY_EXCLUDE_PATH - env-driven auth exclusions
+    for (const path of this.config.getExcludedFullPaths()) {
+      this.httpPaths.register({ prefix: path, include: { authBasic: false } });
+    }
   }
 
   static getHttpsOptions(logger: Logger) {
@@ -311,7 +329,7 @@ export class AppModuleCore {
     consumer
       .apply(ApiKeyAuthMiddleware)
       .exclude(...exclude)
-      .forRoutes('api', 'health', 'mcp');
+      .forRoutes(...this.httpPaths.apiKeyRoutes());
 
     // Dashboard
     const dashboardCredentials = this.dashboardConfig.credentials;

@@ -1,18 +1,18 @@
 import { Injectable, NestMiddleware } from '@nestjs/common';
-import { PrometheusConfigService } from '@waha/modules/waha-prometheus/prometheus.config';
 import { WahaMetrics } from '@waha/modules/waha-prometheus/prometheus.metrics';
+import { HttpPathsService } from '@waha/plugins/HttpPathsService';
 import { NextFunction, Request, Response } from 'express';
 
 @Injectable()
 export class HttpMetricsMiddleware implements NestMiddleware {
   constructor(
     private metrics: WahaMetrics,
-    private config: PrometheusConfigService,
+    private httpPaths: HttpPathsService,
   ) {}
 
   use(req: Request, res: Response, next: NextFunction): void {
     const pathname = (req.originalUrl || req.url || '').split('?')[0];
-    if (pathname.startsWith(this.config.path)) {
+    if (this.httpPaths.isHttpMetricsIgnored(pathname)) {
       next();
       return;
     }

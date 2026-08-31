@@ -46,13 +46,6 @@ export function getPrometheusPath(): string {
   return process.env[Env.WAHA_PROMETHEUS_PATH] || DEFAULT_PATH;
 }
 
-export function getPrometheusExcludePaths(): string[] {
-  if (!isPrometheusEnabled(process.env)) {
-    return [];
-  }
-  return [getPrometheusPath()];
-}
-
 @Injectable()
 export class PrometheusConfigService {
   private eventUnmask = new EventWildUnmask(WAHAEvents, WAHAEventsWild);
