@@ -14876,7 +14876,7 @@ __metadata:
 
 "whatsapp-web.js@github:devlikeapro/whatsapp-web.js#fork-main-2026-06-26":
   version: 1.34.7
-  resolution: "whatsapp-web.js@https://github.com/devlikeapro/whatsapp-web.js.git#commit=9369d08f81551b2c688770a850454e459d999ffa"
+  resolution: "whatsapp-web.js@https://github.com/devlikeapro/whatsapp-web.js.git#commit=77d12da959616c9dc538d386072d4d21eb090c03"
   dependencies:
     archiver: "npm:7.0.1"
     fluent-ffmpeg: "npm:2.1.3"
@@ -14893,7 +14893,7 @@ __metadata:
       optional: true
     unzipper:
       optional: true
-  checksum: 10/4cff95fd9ce65b9bc7bc231553ff14743b9fe8003ed135b3da217218d6fb58e3513502c2fb8c92a9c1ea98d5e714984862d976ff7250d023ad390de9911982d5
+  checksum: 10/e0f6486272cf7c8123a35343b0d696895c486ba0fad2799ff333af3e855bf23c40e35ed8b267fe2b9c8e852e117f8db15e43bec94eaa1360186beb953b602d49
   languageName: node
   linkType: hard
 
