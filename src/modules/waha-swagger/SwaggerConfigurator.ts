@@ -1,23 +1,19 @@
 import { INestApplication } from '@nestjs/common';
-import * as lodash from 'lodash';
 import { DocumentBuilder, OpenAPIObject, SwaggerModule } from '@nestjs/swagger';
 import { DECORATORS } from '@nestjs/swagger/dist/constants';
 import { GetAppsApiTags } from '@waha/apps/app_sdk/api/tags';
+import { WhatsappConfigService } from '@waha/config.service';
 import { BasicAuthFunction } from '@waha/core/auth/basicAuth';
+import { SwaggerConfigService } from '@waha/modules/waha-swagger/swagger.config';
 import { HttpPathsService } from '@waha/plugins/HttpPathsService';
-import { Logger } from 'nestjs-pino';
+import { VERSION } from '@waha/version';
+import * as lodash from 'lodash';
 
-import { WhatsappConfigService } from '../config.service';
-import { VERSION } from '../version';
-import { SwaggerConfigServiceCore } from './config/SwaggerConfigServiceCore';
-
-export class SwaggerConfiguratorCore {
-  protected logger: any;
-  private config: SwaggerConfigServiceCore;
+export class SwaggerConfigurator {
+  protected config: SwaggerConfigService;
 
   constructor(protected app: INestApplication) {
-    this.logger = app.get(Logger);
-    this.config = app.get(SwaggerConfigServiceCore);
+    this.config = app.get(SwaggerConfigService);
   }
 
   get title() {
@@ -57,10 +53,6 @@ export class SwaggerConfiguratorCore {
   }
 
   configure(webhooks: any[]) {
-    if (!this.config.enabled) {
-      return;
-    }
-
     const credentials = this.config.credentials;
     if (credentials) {
       this.setUpAuth(credentials);
@@ -113,8 +105,7 @@ export class SwaggerConfiguratorCore {
       });
 
     const config = app.get(WhatsappConfigService);
-    const swaggerConfig = app.get(SwaggerConfigServiceCore);
-    if (swaggerConfig.advancedConfigEnabled) {
+    if (this.config.advancedConfigEnabled) {
       builder.addServer('{protocol}://{host}:{port}/{baseUrl}', '', {
         protocol: {
           default: 'http',

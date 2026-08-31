@@ -1,7 +1,7 @@
 import { injectTraceContext } from './tracing'; // MUST be line 1, before @nestjs/* and before pino
 import { NestFactory } from '@nestjs/core';
 import { WsAdapter } from '@nestjs/platform-ws';
-import { WAHA_WEBHOOKS } from '@waha/structures/webhooks';
+import { AppBootstrapService } from '@waha/plugins/AppBootstrapService';
 import {
   getNestJSLogLevels,
   getPinoLogLevel,
@@ -15,7 +15,6 @@ import pino from 'pino';
 
 import { WhatsappConfigService } from './config.service';
 import { AppModuleCore } from './core/app.module.core';
-import { SwaggerConfiguratorCore } from './core/SwaggerConfiguratorCore';
 import { AllExceptionsFilter } from './nestjs/AllExceptionsFilter';
 import { getWAHAVersion, VERSION, WAHAVersion } from './version';
 import { loadESMModules } from '@waha/vendor/esm';
@@ -97,9 +96,9 @@ async function bootstrap() {
   app.use(urlencoded({ limit: '50mb', extended: false }));
   app.useWebSocketAdapter(new WsAdapter(app));
 
-  // Configure swagger
-  const swaggerConfigurator = new SwaggerConfiguratorCore(app);
-  swaggerConfigurator.configure(WAHA_WEBHOOKS);
+  // Run app configuration hooks contributed by modules (e.g. swagger)
+  const appBootstrap = app.get(AppBootstrapService);
+  appBootstrap.run(app);
 
   AppModule.appReady(app, logger);
   app.enableShutdownHooks();
