@@ -44,7 +44,6 @@ import {
 } from '@waha/core/engines/noweb/session.noweb.core';
 import { extractMediaContent } from '@waha/core/engines/noweb/utils';
 import { NotImplementedByEngineError } from '@waha/core/exceptions';
-import { WidToJIDPlugin } from '@waha/core/plugins/WidToJIDPlugin';
 import {
   IMediaEngineProcessor,
   MediaContent,
@@ -308,7 +307,6 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
 
   public constructor(config) {
     super(config);
-    this.plugins.add(WidToJIDPlugin.with(null, null));
     this.qr = new QR();
     this.session = new messages.Session({ id: this.name });
     this.presences = new NodeCache({
