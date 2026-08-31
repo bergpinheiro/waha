@@ -15,12 +15,20 @@ export class EventWildUnmask {
   unmask(events: string[]): { events: string[]; unknown: string[] } {
     const rightEvents = [];
     const unknown = [];
-    if (events.includes('*')) {
-      rightEvents.push(...this.all);
-    }
-
     for (const event of events) {
       if (event === '*') {
+        rightEvents.push(...this.all);
+        continue;
+      }
+      // Prefix wildcard - 'message.*' matches everything starting with 'message.'
+      if (event.includes('*')) {
+        const prefix = event.split('*')[0];
+        const matched = this.all.filter((known) => known.startsWith(prefix));
+        if (matched.length === 0) {
+          unknown.push(event);
+          continue;
+        }
+        rightEvents.push(...matched);
         continue;
       }
       if (!this.events.includes(event)) {
