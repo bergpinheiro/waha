@@ -29,6 +29,9 @@ import { MediaLocalStorageModule } from '@waha/core/media/local/media.local.stor
 import { MediaLocalStorageConfig } from '@waha/core/media/local/MediaLocalStorageConfig';
 import { MediaPsqlStorageModule } from '@waha/core/media/psql/media.psql.storage.module';
 import { MediaS3StorageModule } from '@waha/core/media/s3/media.s3.storage.module';
+import { SessionPluginsModule } from '@waha/plugins/session.plugins.module';
+import { isPresenceAutoOnlineEnabled } from '@waha/modules/waha-maintain-online-status/maintain-online-status.config';
+import { MaintainOnlineStatusModule } from '@waha/modules/waha-maintain-online-status/maintain-online-status.module';
 import { CheckFreeDiskSpaceIndicator } from '@waha/core/health/CheckFreeDiskSpaceIndicator';
 import { MongoStoreHealthIndicator } from '@waha/core/health/MongoStoreHealthIndicator';
 import { ChannelsInfoServiceCore } from '@waha/core/services/ChannelsInfoServiceCore';
@@ -139,6 +142,12 @@ export const IMPORTS_CORE = [
   }),
   PassportModule,
   TerminusModule,
+  SessionPluginsModule,
+  ConditionalModule.registerWhen(
+    MaintainOnlineStatusModule,
+    isPresenceAutoOnlineEnabled,
+    { debug: isDebugEnabled() },
+  ),
 ];
 
 const IMPORTS_MEDIA = [

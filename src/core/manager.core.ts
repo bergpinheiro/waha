@@ -72,15 +72,11 @@ import { populateSessionInfo, SessionManager } from './abc/manager.abc';
 
 import { SessionParams, WhatsappSession } from './abc/session.abc';
 import { EngineConfigService } from './config/EngineConfigService';
-import { WidEnsureSuffixPlugin } from '@waha/plugins/WidEnsureSuffixPlugin';
-import { MaintainOnlineStatusPlugin } from '@waha/plugins/MaintainOnlineStatusPlugin';
-import { MessageSourceCachePlugin } from '@waha/plugins/MessageSourceCachePlugin';
-import { SessionRuntimeInfoPlugin } from '@waha/plugins/SessionRuntimeInfoPlugin';
-import { WebhookPlugin } from '@waha/plugins/WebhookPlugin';
-import {
-  PRESENCE_AUTO_ONLINE,
-  PRESENCE_AUTO_ONLINE_DURATION_SECONDS,
-} from '@waha/plugins/MaintainOnlineStatusPlugin.env';
+import { WidEnsureSuffixPlugin } from '@waha/core/plugins/WidEnsureSuffixPlugin';
+import { MessageSourceCachePlugin } from '@waha/core/plugins/MessageSourceCachePlugin';
+import { SessionRuntimeInfoPlugin } from '@waha/core/plugins/SessionRuntimeInfoPlugin';
+import { WebhookPlugin } from '@waha/core/plugins/WebhookPlugin';
+import { SessionPluginsService } from '@waha/plugins/SessionPluginsService';
 
 const ALL = '*';
 
@@ -110,6 +106,7 @@ export class SessionManagerCore
     gowsConfigService: GowsEngineConfigService,
     log: PinoLogger,
     private mediaStorageFactory: MediaStorageFactory,
+    private sessionPlugins: SessionPluginsService,
     @Inject(AppsService)
     appsService: IAppsService,
   ) {
@@ -390,13 +387,9 @@ export class SessionManagerCore
     session.plugins.add(WebhookPlugin.with({ webhooks: webhooks }, null));
     session.plugins.add(MessageSourceCachePlugin.with(null, null));
     session.plugins.add(WidEnsureSuffixPlugin.with(null, null));
-    if (PRESENCE_AUTO_ONLINE) {
-      session.plugins.add(
-        MaintainOnlineStatusPlugin.with(
-          { duration: PRESENCE_AUTO_ONLINE_DURATION_SECONDS * 1000 },
-          null,
-        ),
-      );
+    // Plugins contributed by modules (SessionPluginsModule)
+    for (const options of this.sessionPlugins.plugins(session)) {
+      session.plugins.add(options);
     }
     // Apps (may contribute their own plugins to the session)
     try {

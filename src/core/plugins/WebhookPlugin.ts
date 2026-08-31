@@ -1,6 +1,6 @@
 import { populateSessionInfo } from '@waha/core/abc/manager.abc';
 import { SessionPlugin } from '@waha/core/abc/session.plugin';
-import { WebhookSender } from '@waha/plugins/WebhookPlugin.sender';
+import { WebhookSender } from '@waha/core/plugins/WebhookPlugin.sender';
 import { WAHAEvents, WAHAEventsWild } from '@waha/structures/enums.dto';
 import { WebhookConfig } from '@waha/structures/webhooks.config.dto';
 import { EventWildUnmask } from '@waha/utils/events';

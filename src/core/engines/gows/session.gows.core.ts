@@ -44,7 +44,7 @@ import {
 } from '@waha/core/engines/noweb/session.noweb.core';
 import { extractMediaContent } from '@waha/core/engines/noweb/utils';
 import { NotImplementedByEngineError } from '@waha/core/exceptions';
-import { WidToJIDPlugin } from '@waha/plugins/WidToJIDPlugin';
+import { WidToJIDPlugin } from '@waha/core/plugins/WidToJIDPlugin';
 import {
   IMediaEngineProcessor,
   MediaContent,

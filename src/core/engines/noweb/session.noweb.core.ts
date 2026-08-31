@@ -68,7 +68,7 @@ import {
 import { NowebAuthFactoryCore } from '@waha/core/engines/noweb/NowebAuthFactoryCore';
 import { NowebInMemoryStore } from '@waha/core/engines/noweb/store/NowebInMemoryStore';
 import { NotImplementedByEngineError } from '@waha/core/exceptions';
-import { WidToJIDPlugin } from '@waha/plugins/WidToJIDPlugin';
+import { WidToJIDPlugin } from '@waha/core/plugins/WidToJIDPlugin';
 import { toVcardV3 } from '@waha/core/vcard';
 import { createAgentProxy } from '@waha/core/helpers.proxy';
 import type { Agent } from 'https';
