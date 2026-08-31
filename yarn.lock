@@ -3205,7 +3205,7 @@ __metadata:
   languageName: node
   linkType: hard
 
-"@opentelemetry/api@npm:^1.3.0, @opentelemetry/api@npm:^1.9.1":
+"@opentelemetry/api@npm:^1.3.0, @opentelemetry/api@npm:^1.4.0, @opentelemetry/api@npm:^1.9.1":
   version: 1.9.1
   resolution: "@opentelemetry/api@npm:1.9.1"
   checksum: 10/b26032739d3c54ca99b5a2920844a1fbd4c3ee383cacbb0915e8c706a2626fe91e96feaa6e893397abe0545dc8d0a765b220aa18a31b1773176eeaf3a225e10e
@@ -3707,6 +3707,16 @@ __metadata:
     "@pnpm/network.ca-file": "npm:^1.0.1"
     config-chain: "npm:^1.1.11"
   checksum: 10/222f45ef1ec398caf694a3df65d0b74de55d8291468100043140cbf65ee0a16560cdac41f5d6e95c3ab17c16a2a59eef9121c7aaccc093e68952e0bdda9df578
+  languageName: node
+  linkType: hard
+
+"@prometheus-io/client@npm:^0.16.1":
+  version: 0.16.1
+  resolution: "@prometheus-io/client@npm:0.16.1"
+  dependencies:
+    "@opentelemetry/api": "npm:^1.4.0"
+    tdigest: "npm:^0.1.1"
+  checksum: 10/6e8cdf0fbafc8506e3b5fb32815504fdfcf702e06b0d5d3d345a41ecf7e726e9a8e23b536eded80fdfb2073e14baee1622819129802104984c9fc179d1787048
   languageName: node
   linkType: hard
 
@@ -6090,6 +6100,13 @@ __metadata:
   dependencies:
     file-uri-to-path: "npm:1.0.0"
   checksum: 10/593d5ae975ffba15fbbb4788fe5abd1e125afbab849ab967ab43691d27d6483751805d98cb92f7ac24a2439a8a8678cd0131c535d5d63de84e383b0ce2786133
+  languageName: node
+  linkType: hard
+
+"bintrees@npm:1.0.2":
+  version: 1.0.2
+  resolution: "bintrees@npm:1.0.2"
+  checksum: 10/071896cea5ea5413316c8436e95799444c208630d5c539edd8a7089fc272fc5d3634aa4a2e4847b28350dda1796162e14a34a0eda53108cc5b3c2ff6a036c1fa
   languageName: node
   linkType: hard
 
@@ -13980,6 +13997,15 @@ __metadata:
   languageName: node
   linkType: hard
 
+"tdigest@npm:^0.1.1":
+  version: 0.1.3
+  resolution: "tdigest@npm:0.1.3"
+  dependencies:
+    bintrees: "npm:1.0.2"
+  checksum: 10/c4a0fe3469ddc1eea56938c26215b5bd690efb93ef583872c09baf81646c15acb077d9253e72e39e2655ed140410ca901bb75b77a7d29fcecf77a2efde91e52b
+  languageName: node
+  linkType: hard
+
 "terser-webpack-plugin@npm:^5.3.11":
   version: 5.3.14
   resolution: "terser-webpack-plugin@npm:5.3.14"
@@ -14679,6 +14705,7 @@ __metadata:
     "@opentelemetry/instrumentation-pino": "npm:^0.67.0"
     "@opentelemetry/sdk-node": "npm:^0.221.0"
     "@opentelemetry/sdk-trace": "npm:^2.10.0"
+    "@prometheus-io/client": "npm:^0.16.1"
     "@types/better-sqlite3": "npm:^7.6.10"
     "@types/express": "npm:^4.17.3"
     "@types/jest": "npm:26.0.10"

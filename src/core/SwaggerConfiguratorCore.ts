@@ -5,6 +5,7 @@ import { DECORATORS } from '@nestjs/swagger/dist/constants';
 import { GetAppsApiTags } from '@waha/apps/app_sdk/api/tags';
 import { BasicAuthFunction } from '@waha/core/auth/basicAuth';
 import { DashboardConfigServiceCore } from '@waha/core/config/DashboardConfigServiceCore';
+import { getPrometheusExcludePaths } from '@waha/modules/waha-prometheus/prometheus.config';
 import { Logger } from 'nestjs-pino';
 
 import { WhatsappConfigService } from '../config.service';
@@ -206,6 +207,7 @@ export class SwaggerConfiguratorCore {
       '/jobs',
       '/jobs/',
       ...config.getExcludedFullPaths(),
+      ...getPrometheusExcludePaths(),
     ]);
 
     const authFunction = BasicAuthFunction(username, password, exclude);

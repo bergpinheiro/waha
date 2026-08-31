@@ -34,6 +34,11 @@ import { isPresenceAutoOnlineEnabled } from '@waha/modules/waha-maintain-online-
 import { MaintainOnlineStatusModule } from '@waha/modules/waha-maintain-online-status/maintain-online-status.module';
 import { isJidEngine } from '@waha/modules/waha-wid-jid/wid-jid.plugins';
 import { MessageSourceModule } from '@waha/modules/waha-message-source/message-source.module';
+import {
+  getPrometheusPath,
+  isPrometheusEnabled,
+} from '@waha/modules/waha-prometheus/prometheus.config';
+import { PrometheusModule } from '@waha/modules/waha-prometheus/prometheus.module';
 import { WebhookModule } from '@waha/modules/waha-webhook/webhook.module';
 import { SessionRuntimeInfoModule } from '@waha/modules/waha-session-runtime-info/session-runtime-info.module';
 import { WidJIDModule } from '@waha/modules/waha-wid-jid/wid-jid.module';
@@ -99,6 +104,7 @@ export const IMPORTS_CORE = [
         ignore: (req) => {
           return (
             req.url.startsWith('/ping') ||
+            req.url.startsWith(getPrometheusPath()) ||
             req.url.startsWith('/dashboard/') ||
             req.url.startsWith('/api/files/') ||
             req.url.startsWith('/api/s3/') ||
@@ -161,6 +167,9 @@ export const IMPORTS_CORE = [
     isPresenceAutoOnlineEnabled,
     { debug: isDebugEnabled() },
   ),
+  ConditionalModule.registerWhen(PrometheusModule, isPrometheusEnabled, {
+    debug: isDebugEnabled(),
+  }),
 ];
 
 const IMPORTS_MEDIA = [
