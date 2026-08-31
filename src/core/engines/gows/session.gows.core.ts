@@ -252,6 +252,7 @@ enum WhatsMeowEvent {
   KEEP_ALIVE_RESTORED = 'events.KeepAliveRestored',
   QR_CHANNEL_ITEM = 'whatsmeow.QRChannelItem',
   MESSAGE = 'events.Message',
+  UNDECRYPTABLE_MESSAGE = 'events.UndecryptableMessage',
   RECEIPT = 'events.Receipt',
   PRESENCE = 'events.Presence',
   CHAT_PRESENCE = 'events.ChatPresence',
@@ -503,6 +504,11 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
     });
     events.on(WhatsMeowEvent.MESSAGE_CAPPING, (data) => {
       this.messageCapping.update(parseMessageCapping(data));
+    });
+    events.on(WhatsMeowEvent.UNDECRYPTABLE_MESSAGE, (data) => {
+      this.logger.error(
+        `Undecryptable message in '${data?.Info?.Chat}' from '${data?.Info?.Sender}', id '${data?.Info?.ID}' - content lost unless the sender answers the retry receipt`,
+      );
     });
     events.on(WhatsMeowEvent.PRESENCE, (event: gows.Presence) => {
       if (isJidGroup(event.From)) {
