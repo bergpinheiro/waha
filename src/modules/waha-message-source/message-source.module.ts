@@ -7,6 +7,10 @@ import { SessionPluginsService } from '@waha/plugins/SessionPluginsService';
   imports: [SessionPluginsModule],
   providers: [MessageSourcePluginsProvider],
 })
+/**
+ * Remembers which messages were sent via the API, so message events can tell them apart from messages sent from the
+ * phone or other linked clients - consumers use the source to skip echoes of their own API calls.
+ */
 export class MessageSourceModule {
   constructor(
     sessionPlugins: SessionPluginsService,
