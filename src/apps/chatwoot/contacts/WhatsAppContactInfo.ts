@@ -67,7 +67,9 @@ class JidContactInfo extends ChatContactInfo {
   }
 
   async PublicContactCreate(): Promise<Contact> {
-    const contact: any = await this.session.getContact(this.chatId);
+    const contact: any = await this.session
+      .getContact(this.chatId)
+      .catch(() => null);
     const name =
       contact?.name || contact?.pushName || contact?.pushname || this.chatId;
     const phoneNumberE164 = E164Parser.fromJid(this.chatId);
@@ -135,10 +137,15 @@ class LidContactInfo extends ChatContactInfo {
     if (jid) {
       result = await jid.PublicContactCreate();
     } else {
+      const contact: any = await this.session
+        .getContact(this.chatId)
+        .catch(() => null);
+      const name =
+        contact?.name || contact?.pushName || contact?.pushname || this.chatId;
       result = {
         inbox_id: 0,
         identifier: this.chatId,
-        name: this.chatId,
+        name: name,
       };
     }
     result.custom_attributes = await this.Attributes();
