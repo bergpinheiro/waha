@@ -32,6 +32,18 @@ abstract class ChatContactInfo implements ContactInfo {
     return this.chatId;
   }
 
+  async LidId(): Promise<string | null> {
+    return null;
+  }
+
+  async JidId(): Promise<string | null> {
+    return null;
+  }
+
+  async PhoneNumberE164(): Promise<string | null> {
+    return null;
+  }
+
   abstract AvatarUrl(): Promise<string | null>;
 
   abstract Attributes(): Promise<any>;
@@ -51,6 +63,19 @@ class JidContactInfo extends ChatContactInfo {
   @CacheAsync()
   async fetchLid() {
     return await this.session.findLIDByPN(this.chatId);
+  }
+
+  async LidId(): Promise<string | null> {
+    const lid = await this.fetchLid().catch(() => null);
+    return lid || null;
+  }
+
+  async JidId(): Promise<string | null> {
+    return this.chatId;
+  }
+
+  async PhoneNumberE164(): Promise<string | null> {
+    return E164Parser.fromJid(this.chatId);
   }
 
   @CacheAsync()
@@ -110,6 +135,23 @@ class LidContactInfo extends ChatContactInfo {
       return null;
     }
     return new JidContactInfo(this.session, pn, this.locale);
+  }
+
+  async LidId(): Promise<string | null> {
+    return this.chatId;
+  }
+
+  async JidId(): Promise<string | null> {
+    const jid = await this.jid();
+    return jid?.ChatId() ?? null;
+  }
+
+  async PhoneNumberE164(): Promise<string | null> {
+    const jid = await this.jid();
+    if (!jid) {
+      return null;
+    }
+    return await jid.PhoneNumberE164();
   }
 
   async AvatarUrl(): Promise<string | null> {
