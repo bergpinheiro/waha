@@ -1357,10 +1357,9 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
 
   @Activity()
   async forwardMessage(request: MessageForwardRequest): Promise<WAMessage> {
-    // Parsed here rather than passed along whole so a malformed id is refused
-    // before it reaches the engine. GOWS finds the message by id alone - it
-    // does not need the chat the message came from.
-    const key = parseMessageIdSerialized(request.messageId);
+    // Only the id is needed - the chat is resolved separately below - so the
+    // short form is accepted too, as in editMessage and sendPollVote.
+    const key = parseMessageIdSerialized(request.messageId, true);
     const jid = await this.hooks.wid.chat.promise(
       request.chatId,
       'forwardMessage',
@@ -1376,7 +1375,7 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
         force: true,
       }),
     });
-    let response;
+    let response: messages.MessageResponse;
     try {
       response = await promisify(this.client.SendMessage)(message);
     } catch (error) {
@@ -1387,11 +1386,18 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
           `Message with id '${request.messageId}' not found`,
         );
       }
+      // The engine refuses what it will not forward - a poll, a type with
+      // nowhere to carry the markers, a session with message storage off. That
+      // is an answer, not a failure, so it must not read as one.
+      if (
+        error?.code === grpc.status.INVALID_ARGUMENT ||
+        error?.code === grpc.status.FAILED_PRECONDITION
+      ) {
+        throw new UnprocessableEntityException(error.details ?? error.message);
+      }
       throw error;
     }
     const data = response.toObject();
-    // Same shape every other send in this engine returns - id and raw data -
-    // which is narrower than WAMessage, as in sendEvent.
     return this.messageResponse(jid, data) as any;
   }
 
