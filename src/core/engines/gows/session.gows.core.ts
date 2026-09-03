@@ -1355,8 +1355,44 @@ export class WhatsappSessionGoWSCore extends WhatsappSession {
     return this.messageResponse(jid, data);
   }
 
-  forwardMessage(request: MessageForwardRequest): Promise<WAMessage> {
-    throw new NotImplementedByEngineError();
+  @Activity()
+  async forwardMessage(request: MessageForwardRequest): Promise<WAMessage> {
+    // Parsed here rather than passed along whole so a malformed id is refused
+    // before it reaches the engine. GOWS finds the message by id alone - it
+    // does not need the chat the message came from.
+    const key = parseMessageIdSerialized(request.messageId);
+    const jid = await this.hooks.wid.chat.promise(
+      request.chatId,
+      'forwardMessage',
+    );
+    const message = new messages.MessageRequest({
+      id: request.id,
+      jid: jid,
+      session: this.session,
+      forward: new messages.ForwardOptions({
+        messageId: key.id,
+        // NOWEB marks your own messages as forwarded as well, so keep the two
+        // engines telling the recipient the same thing.
+        force: true,
+      }),
+    });
+    let response;
+    try {
+      response = await promisify(this.client.SendMessage)(message);
+    } catch (error) {
+      // Asking to forward a message that is not there is the caller's mistake,
+      // not a server fault - the other engines answer 422 for it too.
+      if (error?.code === grpc.status.NOT_FOUND) {
+        throw new UnprocessableEntityException(
+          `Message with id '${request.messageId}' not found`,
+        );
+      }
+      throw error;
+    }
+    const data = response.toObject();
+    // Same shape every other send in this engine returns - id and raw data -
+    // which is narrower than WAMessage, as in sendEvent.
+    return this.messageResponse(jid, data) as any;
   }
 
   private async sendMedia(type: messages.MediaType, request: any) {
